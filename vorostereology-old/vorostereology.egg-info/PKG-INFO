@@ -1,0 +1,15 @@
+Metadata-Version: 2.1
+Name: vorostereology
+Version: 1.0
+Summary: A python interface to the voro++ library based on pyvoro, along with functions related to generating regularized Laguerre-Voronoi diagrams and computing cross sections.
+Author: Thomas van der Jagt
+Keywords: geometry,mathematics,Voronoi
+Classifier: Topic :: Scientific/Engineering :: Mathematics
+Classifier: Topic :: Scientific/Engineering :: Physics
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python :: 3
+License-File: LICENSE
+Requires-Dist: cython
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: matplotlib
