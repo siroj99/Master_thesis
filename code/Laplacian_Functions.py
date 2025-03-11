@@ -4,6 +4,7 @@ import dionysus as d
 import scipy
 import pandas as pd
 from tqdm.auto import tqdm
+import matplotlib.pyplot as plt
 import gudhi as gd
 
 def SchurComp(M, ind):
@@ -38,7 +39,9 @@ def persistent_Laplacian(Bqplus1: np.array, Bq: np.array, verb = False) -> np.ar
         downL = Bq.T@Bq
 
     if type(Bqplus1) != int:
+        # print("Bqplus1:", Bqplus1)
         upLaplacian = Bqplus1@Bqplus1.T
+        # print("Delta^L:", upLaplacian)
         nqL = Bqplus1.shape[0]
         IKL = list(range(nqK, nqL))
         upL = SchurComp(upLaplacian, IKL)
@@ -47,7 +50,7 @@ def persistent_Laplacian(Bqplus1: np.array, Bq: np.array, verb = False) -> np.ar
     if verb:
         print("upL:\n", upL)
         if type(upL) != int:
-            eigval, eigvec = np.linalg.eig(upL)
+            eigval, eigvec = np.linalg.eigh(upL)
             eigval_product = 1
             for i, val in enumerate(eigval):
                 print(f"eval: {np.round(val,2)}, evec: {np.round(eigvec[:,i]/np.min(np.abs(eigvec[:,i][np.abs(eigvec[:,i]) > 1e-8])),2)}")
@@ -57,7 +60,7 @@ def persistent_Laplacian(Bqplus1: np.array, Bq: np.array, verb = False) -> np.ar
         print()
         print("downL:\n", downL)
         if type(downL) != int:
-            eigval, eigvec = np.linalg.eig(downL)
+            eigval, eigvec = np.linalg.eigh(downL)
             eigval_product = 1
             for i, val in enumerate(eigval):
                 print(f"eval: {np.round(val,2)}, evec: {np.round(eigvec[:,i]/np.min(np.abs(eigvec[:,i][np.abs(eigvec[:,i]) > 1e-8])),2)}")
@@ -167,18 +170,18 @@ def persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_tim
 #     if verb:
 #         print("upL:\n", upL)
 #         if type(upL) != int:
-#             eigval, eigvec = np.linalg.eig(upL)
+#             eigval, eigvec = np.linalg.eigh(upL)
 #             for i, val in enumerate(eigval):
 #                 print(np.round(val,2), np.round(eigvec[:,i]/np.min(np.abs(eigvec[:,i][np.abs(eigvec[:,i]) > 1e-8])),2))
 #         print()
 #         print("downL:\n", downL)
 #         if type(downL) != int:
-#             eigval, eigvec = np.linalg.eig(downL)
+#             eigval, eigvec = np.linalg.eigh(downL)
 #             for i, val in enumerate(eigval):
 #                 print(np.round(val,2), np.round(eigvec[:,i]/np.min(np.abs(eigvec[:,i][np.abs(eigvec[:,i]) > 1e-8])),2))
 #         print()
 
-#     eigvals, eigvecs = np.linalg.eig(upL + downL)
+#     eigvals, eigvecs = np.linalg.eigh(upL + downL)
 #     non_zero_evals = eigvals[eigvals > 1e-8]
 #     if len(non_zero_evals) > 0:
 #         product = np.prod(non_zero_evals)
@@ -220,7 +223,7 @@ def complete_analysis(f: d.Filtration, weight_fun, max_dim = 1):
                     sm1 = relevant_times[s_i-1]
                 
                 Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, tm1, simplices_at_time)
-                evals_ijm1 = np.linalg.eig(Lap)[0]
+                evals_ijm1 = np.linalg.eigh(Lap)[0]
                 bijm1 = np.sum(evals_ijm1 < 1e-8)
                 non_zero_evals = evals_ijm1[evals_ijm1 > 1e-8]
                 if len(non_zero_evals) > 0:
@@ -229,7 +232,7 @@ def complete_analysis(f: d.Filtration, weight_fun, max_dim = 1):
                     pijm1 = 1
 
                 Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time)
-                evals_ij = np.linalg.eig(Lap)[0]
+                evals_ij = np.linalg.eigh(Lap)[0]
                 bij = np.sum(evals_ij < 1e-8)
                 non_zero_evals = evals_ij[evals_ij > 1e-8]
                 if len(non_zero_evals) > 0:
@@ -239,7 +242,7 @@ def complete_analysis(f: d.Filtration, weight_fun, max_dim = 1):
 
                 if s_i > 0:
                     Lap = persistent_Laplacian_filtration(q, boundary_matrices, sm1, tm1, simplices_at_time)
-                    evals_im1jm1 = np.linalg.eig(Lap)[0]
+                    evals_im1jm1 = np.linalg.eigh(Lap)[0]
                     bim1jm1 = np.sum(evals_im1jm1 < 1e-8)
                     non_zero_evals = evals_im1jm1[evals_im1jm1 > 1e-8]
                     if len(non_zero_evals) > 0:
@@ -248,7 +251,7 @@ def complete_analysis(f: d.Filtration, weight_fun, max_dim = 1):
                         pim1jm1 = 1
 
                     Lap = persistent_Laplacian_filtration(q, boundary_matrices, sm1, t, simplices_at_time)
-                    evals_im1j = np.linalg.eig(Lap)[0]
+                    evals_im1j = np.linalg.eigh(Lap)[0]
                     bim1j = np.sum(evals_im1j < 1e-8)
                     non_zero_evals = evals_im1j[evals_im1j > 1e-8]
                     if len(non_zero_evals) > 0:
@@ -308,15 +311,16 @@ def complete_analysis_fast(f: d.Filtration, weight_fun, max_dim = 1):
                 "p_ijm1": [], "p_ij": [], "p_im1jm1": [], "p_im1j": []}
     
     for q in range(max_dim+1):
-        t_i_bar = tqdm(range(len(relevant_times)))
+        # t_i_bar = tqdm(range(len(relevant_times)), leave=False)         # CHANGED THIS FOR LOADING BAR!!!!!
+        t_i_bar = range(len(relevant_times))
         for t_i in t_i_bar:
             for s_i in range(t_i+1):
-                t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
+                # t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
                 s, t = relevant_times[s_i], relevant_times[t_i]
 
                 Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time)
                 
-                eigenvalues[q][s][t] = np.linalg.eig(Lap)[0]
+                eigenvalues[q][s][t] = np.linalg.eigh(Lap)[0]
 
     for q in range(max_dim+1):
         for t_i in range(len(relevant_times)):
@@ -418,7 +422,7 @@ def complete_analysis_fastest(f: d.Filtration, weight_fun, max_dim = 1):
                     sm1 = relevant_times[s_i-1]
                 
                 Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, tm1, simplices_at_time)
-                evals_ijm1 = np.linalg.eig(Lap)[0]
+                evals_ijm1 = np.linalg.eigh(Lap)[0]
                 bijm1 = np.sum(evals_ijm1 < 1e-8)
                 non_zero_evals = evals_ijm1[evals_ijm1 > 1e-8]
                 if len(non_zero_evals) > 0:
@@ -427,7 +431,7 @@ def complete_analysis_fastest(f: d.Filtration, weight_fun, max_dim = 1):
                     pijm1 = 1
 
                 Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time)
-                evals_ij = np.linalg.eig(Lap)[0]
+                evals_ij = np.linalg.eigh(Lap)[0]
                 bij = np.sum(evals_ij < 1e-8)
                 non_zero_evals = evals_ij[evals_ij > 1e-8]
                 if len(non_zero_evals) > 0:
@@ -437,7 +441,7 @@ def complete_analysis_fastest(f: d.Filtration, weight_fun, max_dim = 1):
 
                 if s_i > 0:
                     Lap = persistent_Laplacian_filtration(q, boundary_matrices, sm1, tm1, simplices_at_time)
-                    evals_im1jm1 = np.linalg.eig(Lap)[0]
+                    evals_im1jm1 = np.linalg.eigh(Lap)[0]
                     bim1jm1 = np.sum(evals_im1jm1 < 1e-8)
                     non_zero_evals = evals_im1jm1[evals_im1jm1 > 1e-8]
                     if len(non_zero_evals) > 0:
@@ -446,7 +450,7 @@ def complete_analysis_fastest(f: d.Filtration, weight_fun, max_dim = 1):
                         pim1jm1 = 1
 
                     Lap = persistent_Laplacian_filtration(q, boundary_matrices, sm1, t, simplices_at_time)
-                    evals_im1j = np.linalg.eig(Lap)[0]
+                    evals_im1j = np.linalg.eigh(Lap)[0]
                     bim1j = np.sum(evals_im1j < 1e-8)
                     non_zero_evals = evals_im1j[evals_im1j > 1e-8]
                     if len(non_zero_evals) > 0:
@@ -486,6 +490,178 @@ def complete_analysis_fastest(f: d.Filtration, weight_fun, max_dim = 1):
                     barcodes["p_im1j"].append(pim1j)
     
     return pd.DataFrame(barcodes)
+
+def persistent_Laplacian_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1):
+    f.sort()
+    max_time = f[len(f)-1].data
+    boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
+
+    eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    
+    for q in range(max_dim+1):
+        t_i_bar = tqdm(range(len(relevant_times)), leave=False)
+        for t_i in t_i_bar:
+            for s_i in range(t_i+1):
+                t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
+                s, t = relevant_times[s_i], relevant_times[t_i]
+
+                Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time)
+                
+                eigenvalues[q][s][t] = np.linalg.eigvalsh(Lap)
+    return eigenvalues, relevant_times
+
+def eig_plot_helper(x, fun, eps = 1e-8):
+    if len(x) > 0:
+        pos_x = x[x>eps]
+        if len(pos_x) > 0:
+            return fun(pos_x)
+        else:
+            return 0
+    else:
+        return np.nan
+
+def plot_eigenvalues(eigenvalues, relevant_times, plot_type = "all", barcodes = None):
+    max_dim = max(eigenvalues.keys())
+    if plot_type == "all":
+        fig, ax = plt.subplots(max_dim+1, 4)
+        fig.set_size_inches(4*4, 4*(max_dim+1))
+        cur_ax = lambda x,y: ax[x, y]
+    else:
+        fig, ax = plt.subplots(max_dim+1, 1)
+        fig.set_size_inches(4, 4*(max_dim+1))
+        cur_ax = lambda x,y: ax[x]
+
+    fig.gca()
+
+    # For pcolormesh, we need a grid that is one bigger as every rectangle needs starting and ending points.
+    # Now added a point the same distance away as the last two real points.
+    extended_relevant_times = relevant_times+[2*relevant_times[-1]-relevant_times[-2]]
+    x, y = np.meshgrid(extended_relevant_times, extended_relevant_times)
+
+    if barcodes is not None:
+        barcodes_births, barcodes_deaths = [], []
+        for q in range(max_dim+1):
+            barcodes_births.append([])
+            barcodes_deaths.append([])
+            for birth, death in barcodes[q]:
+                barcodes_births[q].append(birth)
+                if death != np.inf:
+                    barcodes_deaths[q].append(death)
+                else:
+                    barcodes_deaths[q].append(extended_relevant_times[-1])
+
+    for q in range(max_dim+1):
+        df_evals = pd.DataFrame(eigenvalues[q])
+        ax_i = 0
+
+        if plot_type in ["min", "all"]:     
+            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, np.min))).values, alpha=1)
+            plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
+            if q == 0:
+                cur_ax(q, ax_i).set_title("Minimum eigenvalue")
+            if barcodes is not None:
+                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], c="black")
+
+            ax_n = cur_ax(q, ax_i).twinx()
+            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], np.min) for t in relevant_times for _ in (0,1)][:-1], c="r",alpha=0.5)
+            ax_i += 1
+
+
+        if plot_type in ["max", "all"]:
+            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, np.max))).values, alpha=1)
+            plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
+            if q == 0:
+                cur_ax(q, ax_i).set_title("Maximum eigenvalue")
+            if barcodes is not None:
+                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], c="black")
+
+            ax_n = cur_ax(q, ax_i).twinx()
+            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], np.max) for t in relevant_times for _ in (0,1)][:-1], c="r",alpha=0.5)
+            ax_i += 1
+
+        if plot_type in ["prod", "all"]:
+            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, np.prod))).values, alpha=1, norm="log")
+            plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
+            if q == 0:
+                cur_ax(q, ax_i).set_title("Product of eigenvalues")
+            if barcodes is not None:
+                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], c="black")
+
+            ax_n = cur_ax(q, ax_i).twinx()
+            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], np.prod) for t in relevant_times for _ in (0,1)][:-1], c="r",alpha=0.5)
+            ax_n.set_yscale("log")
+            ax_i += 1
+        
+        if plot_type in ["sum", "all"]:
+            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, np.sum))).values, alpha=1)
+            plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
+            if q == 0:
+                cur_ax(q, ax_i).set_title("Sum of eigenvalues")
+            if barcodes is not None:
+                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], c="black")
+
+            ax_n = cur_ax(q, ax_i).twinx()
+            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], np.sum) for t in relevant_times for _ in (0,1)][:-1], c="r",alpha=0.5)
+            ax_i += 1
+
+        cur_ax(q, 0).set_ylabel(f"q={q}")
+    fig.tight_layout()
+    fig.show()
+    return fig, ax
+
+def plot_persistent_Laplacian_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plot_type = "all"):
+    eigenvalues, relevant_times = persistent_Laplacian_eigenvalues(f, weight_fun, max_dim=max_dim)
+
+    p = d.cohomology_persistence(f, 47, True)
+    dgms = d.init_diagrams(p, f)
+    barcodes = [[(p.birth, p.death) for p in dgms[q]] for q in range(len(dgms))]
+
+    fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_type=plot_type, barcodes=barcodes)
+    return eigenvalues, relevant_times, fig, ax
+
+def plot_non_persistent_eigenvalues(eigenvalues, relevant_times, plot_type="all"):
+    max_dim = max(eigenvalues.keys())
+    if plot_type == "all":
+        fig, ax = plt.subplots(max_dim+1, 4)
+        fig.set_size_inches(4*4, 4*(max_dim+1))
+        cur_ax = lambda x,y: ax[x, y]
+    else:
+        fig, ax = plt.subplots(max_dim+1, 1)
+        fig.set_size_inches(4, 4*(max_dim+1))
+        cur_ax = lambda x,y: ax[x]
+
+    fig.gca()
+    for q in range(max_dim+1):
+        ax_i = 0
+
+        if plot_type in ["min", "all"]:     
+            im = cur_ax(q, ax_i).plot(relevant_times, [np.min(eigenvalues[q][t][t]) for t in relevant_times])
+            if q == 0:
+                cur_ax(q, ax_i).set_title("Minimum eigenvalue")
+            ax_i += 1
+
+        if plot_type in ["max", "all"]:
+            im = cur_ax(q, ax_i).plot(relevant_times, [np.max(eigenvalues[q][t][t]) for t in relevant_times])
+            if q == 0:
+                cur_ax(q, ax_i).set_title("Maximum eigenvalue")
+            ax_i += 1
+
+        if plot_type in ["prod", "all"]:
+            im = cur_ax(q, ax_i).plot(relevant_times, [np.prod(eigenvalues[q][t][t]) for t in relevant_times])
+            if q == 0:
+                cur_ax(q, ax_i).set_title("Product of eigenvalues")
+            ax_i += 1
+        
+        if plot_type in ["sum", "all"]:
+            im = cur_ax(q, ax_i).plot(relevant_times, [np.sum(eigenvalues[q][t][t]) for t in relevant_times])
+            if q == 0:
+                cur_ax(q, ax_i).set_title("Sum of eigenvalues")
+            ax_i += 1
+
+        cur_ax(q, 0).set_ylabel(f"q={q}")
+    fig.tight_layout()
+    fig.show()
+    return fig, ax
 
 # def complete_analysis_new(f: d.Filtration, weight_fun, max_dim = 1):
 #     f.sort()
