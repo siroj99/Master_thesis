@@ -2,7 +2,9 @@ import numpy as np
 from copy import deepcopy
 import dionysus as d
 import scipy
+import scipy.stats as ss
 import pandas as pd
+from sympy import use
 from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
 import gudhi as gd
@@ -134,8 +136,10 @@ def compute_boundary_matrices(f: d.Filtration, weight_fun):
 
     return boundary_matrices, name_to_idx, simplices_at_time, relevant_times
 
-def persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time, verb=False):
-    if q > 0:
+def persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time, verb=False, up_only = False):
+    if up_only:
+        Bq = simplices_at_time(s)[q]
+    elif q > 0:
         Bq = boundary_matrices[q][:simplices_at_time(s)[q-1], :simplices_at_time(s)[q]]
     else:
         Bq = simplices_at_time(s)[q]
@@ -144,6 +148,9 @@ def persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_tim
         Bqplus1 = boundary_matrices[q+1][:simplices_at_time(t)[q], :simplices_at_time(t)[q+1]]
     else:
         Bqplus1 = 0
+
+    if verb:
+        print("Bqplus1:", Bqplus1)
     return persistent_Laplacian(Bqplus1, Bq, verb=verb)
 
 # def persistent_Laplacian_new(Bqplus1: np.array, Bq: np.array, verb = False) -> np.array:
@@ -298,6 +305,55 @@ def compute_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False):
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
     return persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time, verb=verb)
 
+def compute_cross_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False, use_4 = False):
+    f.sort()
+    max_time = f[len(f)-1].data
+    boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
+    if verb:
+        print("Laplacian s to t")
+    Lap_ij = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time, verb=verb)
+
+    if verb:
+        print("Laplacian s to t-1")
+    Lap_ijm1 = persistent_Laplacian_filtration(q, boundary_matrices, s, t-1, simplices_at_time, verb=verb)
+
+    if use_4:
+        if verb:
+            print("Laplacian s-1 to t-1")
+        Lap_im1jm1 = persistent_Laplacian_filtration(q, boundary_matrices, s-1, t-1, simplices_at_time, verb=verb)
+
+        if verb:
+            print("Laplacian s-1 to t")
+        Lap_im1j = persistent_Laplacian_filtration(q, boundary_matrices, s-1, t, simplices_at_time, verb=verb) 
+        
+        part_sm1 = Lap_im1jm1 - Lap_im1j
+        b = np.zeros_like(Lap_ij)
+        b[:part_sm1.shape[0], :part_sm1.shape[1]] = part_sm1
+        return  -1*((Lap_ijm1 - Lap_ij) - (b))
+    
+    else:
+        return  -1*(Lap_ijm1 - Lap_ij)
+    
+
+def compute_vertical_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False, use_restriction = False):
+    f.sort()
+    max_time = f[len(f)-1].data
+    boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
+    relevant_times = np.array(relevant_times)
+    s_i, t_i = np.argmin(np.abs(relevant_times-s)), np.argmin(np.abs(relevant_times-t))
+    sm1 = relevant_times[s_i-1]
+    if verb:
+        print("Laplacian s to t")
+    Lap_ij = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time, verb=verb)
+
+    if verb:
+        print("Laplacian s-1 to t")
+    Lap_im1j = np.zeros((simplices_at_time(s)[q],simplices_at_time(s)[q]))
+    Lap_im1j[:simplices_at_time(sm1)[q], :simplices_at_time(sm1)[q]] = persistent_Laplacian_filtration(q, boundary_matrices, sm1, t, simplices_at_time, verb=verb)
+    
+    if use_restriction:
+        return (Lap_ij-Lap_im1j)[:simplices_at_time(sm1)[q], :simplices_at_time(sm1)[q]]
+    return  Lap_ij-Lap_im1j
 
 def complete_analysis_fast(f: d.Filtration, weight_fun, max_dim = 1):
     f.sort()
@@ -510,9 +566,113 @@ def persistent_Laplacian_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1):
                 eigenvalues[q][s][t] = np.linalg.eigvalsh(Lap)
     return eigenvalues, relevant_times
 
+def cross_Laplacian_eigenvalues(f, weight_fun, max_dim = 1, use_4 = False):
+    f.sort()
+    max_time = f[len(f)-1].data
+    boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
+
+    laplacians = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    
+    print("Computing laplacians...")
+    for q in range(max_dim+1):
+        t_i_bar = tqdm(range(len(relevant_times)), leave=False)
+        for t_i in t_i_bar:
+            for s_i in range(t_i+1):
+                t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
+                s, t = relevant_times[s_i], relevant_times[t_i]
+                Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time)
+                laplacians[q][s][t] = Lap
+
+    eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    print("Computing eigenvalues...")
+    for q in range(max_dim+1):
+        t_i_bar = tqdm(range(len(relevant_times)), leave=False)
+        for t_i in t_i_bar:
+            for s_i in range(t_i):
+                t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
+                s, t, tm1 = relevant_times[s_i], relevant_times[t_i], relevant_times[t_i-1] 
+                if s_i != 0 and use_4:
+                    sm1 = relevant_times[s_i-1]
+                    Lap_im1jm1 = laplacians[q][sm1][tm1]
+                    Lap_im1j = laplacians[q][sm1][t]
+                    part_im1 = Lap_im1jm1 - Lap_im1j
+                else:
+                    part_im1 = np.zeros((1,1))
+
+                Lap_ij = laplacians[q][s][t]
+                Lap_ijm1 = laplacians[q][s][tm1]
+
+                if use_4:
+                    b = np.zeros_like(Lap_ij)
+                    b[:part_im1.shape[0], :part_im1.shape[1]] = part_im1
+                    cross_Lap = -1*((Lap_ijm1 - Lap_ij) - (b))
+                else:
+                    cross_Lap = Lap_ij-Lap_ijm1
+                
+                try:
+                    eigenvalues[q][s][t] = np.linalg.eigvalsh(cross_Lap)
+                except:
+                    print(f"s: {s}, t: {t}, q: {q}")
+                    print(f"Lap_ij\n{Lap_ij}")
+                    print(f"Lap_ijm1\n{Lap_ijm1}")
+                    if s_i != 0:
+                        print(f"b:\n{b}")
+                    raise ValueError
+
+    return eigenvalues, relevant_times
+
+def vertical_Laplacian_eigenvalues(f, weight_fun, max_dim = 1, use_restriction = True):
+    f.sort()
+    max_time = f[len(f)-1].data
+    boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
+
+    laplacians = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    
+    print("Computing laplacians...")
+    for q in range(max_dim+1):
+        t_i_bar = tqdm(range(len(relevant_times)), leave=False)
+        for t_i in t_i_bar:
+            for s_i in range(t_i+1):
+                t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
+                s, t = relevant_times[s_i], relevant_times[t_i]
+                Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time)
+                laplacians[q][s][t] = Lap
+
+    eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    print("Computing eigenvalues...")
+    for q in range(max_dim+1):
+        t_i_bar = tqdm(range(len(relevant_times)), leave=False)
+        for t_i in t_i_bar:
+            for s_i in range(t_i):
+                t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
+                s, t = relevant_times[s_i], relevant_times[t_i]
+
+                Lap_ij = laplacians[q][s][t]
+                
+                if s_i != 0:
+                    sm1 = relevant_times[s_i-1]
+                    Lap_im1j = np.zeros((simplices_at_time(s)[q], simplices_at_time(s)[q]))
+                    Lap_im1j[:simplices_at_time(sm1)[q], :simplices_at_time(sm1)[q]] = laplacians[q][sm1][t]
+                    cross_Lap = Lap_ij - Lap_im1j
+                    if use_restriction:
+                        cross_Lap = cross_Lap[:simplices_at_time(sm1)[q], :simplices_at_time(sm1)[q]]
+                else:
+                    cross_Lap = Lap_ij
+                
+                try:
+                    eigenvalues[q][s][t] = np.linalg.eigvalsh(cross_Lap)
+                except:
+                    print(f"s: {s}, t: {t}, q: {q}")
+                    print(f"Lap_ij\n{Lap_ij}")
+                    if s_i != 0:
+                        print(f"Lap_im1j\n{Lap_im1j}")
+                    raise ValueError
+
+    return eigenvalues, relevant_times
+
 def eig_plot_helper(x, fun, eps = 1e-8):
     if len(x) > 0:
-        pos_x = x[x>eps]
+        pos_x = x[np.abs(x)>eps]
         if len(pos_x) > 0:
             return fun(pos_x)
         else:
@@ -520,16 +680,37 @@ def eig_plot_helper(x, fun, eps = 1e-8):
     else:
         return np.nan
 
-def plot_eigenvalues(eigenvalues, relevant_times, plot_type = "all", barcodes = None):
+def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration = None, 
+                     plot_args_mesh = {}, 
+                     plot_args_diag = {},
+                     plot_args_line = {},
+                     plot_type_to_fun = {}):
+    # Can choose these plot types
+    plot_type_to_fun = {
+        "Min": np.min,
+        "Max": np.max,
+        "Sum": np.sum,
+        "Mean": np.mean,
+        "Prod": np.prod,
+        "Gmean": ss.gmean
+    } | plot_type_to_fun
+
+    plot_args_mesh = {"alpha": 1, "cmap": "jet"} | plot_args_mesh
+    plot_args_diag = {"c": "black", "marker": ".", "alpha": 0.75} | plot_args_diag
+    plot_args_line = {"c": "r", "alpha": 0.5} | plot_args_line
+
     max_dim = max(eigenvalues.keys())
-    if plot_type == "all":
-        fig, ax = plt.subplots(max_dim+1, 4)
-        fig.set_size_inches(4*4, 4*(max_dim+1))
-        cur_ax = lambda x,y: ax[x, y]
-    else:
-        fig, ax = plt.subplots(max_dim+1, 1)
-        fig.set_size_inches(4, 4*(max_dim+1))
+
+    if plot_types == "all":
+        plot_types = list(plot_type_to_fun.keys())
+
+    fig, ax = plt.subplots(max_dim+1, len(plot_types))
+    fig.set_size_inches(4*len(plot_types), 4*(max_dim+1))
+    if len(plot_types) == 1:
         cur_ax = lambda x,y: ax[x]
+    else:
+        cur_ax = lambda x,y: ax[x, y]
+        
 
     fig.gca()
 
@@ -538,85 +719,62 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_type = "all", barcodes = 
     extended_relevant_times = relevant_times+[2*relevant_times[-1]-relevant_times[-2]]
     x, y = np.meshgrid(extended_relevant_times, extended_relevant_times)
 
-    if barcodes is not None:
+    if filtration is not None:
+        p = d.cohomology_persistence(filtration, 47, True)
+        dgms = d.init_diagrams(p, filtration)
         barcodes_births, barcodes_deaths = [], []
-        for q in range(max_dim+1):
+        for q in range(len(dgms)):
             barcodes_births.append([])
             barcodes_deaths.append([])
-            for birth, death in barcodes[q]:
-                barcodes_births[q].append(birth)
-                if death != np.inf:
-                    barcodes_deaths[q].append(death)
+            for p in dgms[q]:
+                barcodes_births[q].append(p.birth)
+                if p.death != np.inf:
+                    barcodes_deaths[q].append(p.death)
                 else:
                     barcodes_deaths[q].append(extended_relevant_times[-1])
 
     for q in range(max_dim+1):
         df_evals = pd.DataFrame(eigenvalues[q])
-        ax_i = 0
-
-        if plot_type in ["min", "all"]:     
-            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, np.min))).values, alpha=1)
+        for ax_i, plot_type in enumerate(plot_types):
+            if plot_type == "Prod":
+                plot_args_mesh["norm"] = "log"
+            else:
+                plot_args_mesh["norm"] = "linear"
+            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, plot_type_to_fun[plot_type]))).values, **plot_args_mesh)
             plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
             if q == 0:
-                cur_ax(q, ax_i).set_title("Minimum eigenvalue")
-            if barcodes is not None:
-                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], c="black")
+                cur_ax(q, ax_i).set_title(f"{plot_type} eigenvalue")
+            if filtration is not None:
+                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], **plot_args_diag)
 
             ax_n = cur_ax(q, ax_i).twinx()
-            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], np.min) for t in relevant_times for _ in (0,1)][:-1], c="r",alpha=0.5)
-            ax_i += 1
-
-
-        if plot_type in ["max", "all"]:
-            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, np.max))).values, alpha=1)
-            plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
-            if q == 0:
-                cur_ax(q, ax_i).set_title("Maximum eigenvalue")
-            if barcodes is not None:
-                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], c="black")
-
-            ax_n = cur_ax(q, ax_i).twinx()
-            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], np.max) for t in relevant_times for _ in (0,1)][:-1], c="r",alpha=0.5)
-            ax_i += 1
-
-        if plot_type in ["prod", "all"]:
-            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, np.prod))).values, alpha=1, norm="log")
-            plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
-            if q == 0:
-                cur_ax(q, ax_i).set_title("Product of eigenvalues")
-            if barcodes is not None:
-                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], c="black")
-
-            ax_n = cur_ax(q, ax_i).twinx()
-            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], np.prod) for t in relevant_times for _ in (0,1)][:-1], c="r",alpha=0.5)
-            ax_n.set_yscale("log")
-            ax_i += 1
-        
-        if plot_type in ["sum", "all"]:
-            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, np.sum))).values, alpha=1)
-            plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
-            if q == 0:
-                cur_ax(q, ax_i).set_title("Sum of eigenvalues")
-            if barcodes is not None:
-                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], c="black")
-
-            ax_n = cur_ax(q, ax_i).twinx()
-            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], np.sum) for t in relevant_times for _ in (0,1)][:-1], c="r",alpha=0.5)
-            ax_i += 1
-
+            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], plot_type_to_fun[plot_type]) for t in relevant_times for _ in (0,1)][:-1], **plot_args_line)
+            if plot_type == "Prod":
+                ax_n.set_yscale("log")
         cur_ax(q, 0).set_ylabel(f"q={q}")
     fig.tight_layout()
-    fig.show()
     return fig, ax
 
-def plot_persistent_Laplacian_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plot_type = "all"):
-    eigenvalues, relevant_times = persistent_Laplacian_eigenvalues(f, weight_fun, max_dim=max_dim)
+def plot_Laplacian_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plot_types = "all", 
+                     plot_args_mesh = {}, 
+                     plot_args_diag = {},
+                     plot_args_line = {},
+                     plot_type_to_fun = {},
+                     laplacian_type = "persistent",
+                     use_restriction = True):
+    """
+    lapalcian_type: "persistent" for normal laplacian, or "cross" for cross laplacian.
+    """
+    if laplacian_type == "persistent":
+        eigenvalues, relevant_times = persistent_Laplacian_eigenvalues(f, weight_fun, max_dim=max_dim)
+    elif laplacian_type == "vertical":
+        eigenvalues, relevant_times = vertical_Laplacian_eigenvalues(f, weight_fun, max_dim=max_dim, use_restriction=use_restriction)
+    else:
+        eigenvalues, relevant_times = cross_Laplacian_eigenvalues(f, weight_fun, max_dim=max_dim)
 
-    p = d.cohomology_persistence(f, 47, True)
-    dgms = d.init_diagrams(p, f)
-    barcodes = [[(p.birth, p.death) for p in dgms[q]] for q in range(len(dgms))]
-
-    fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_type=plot_type, barcodes=barcodes)
+    fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_types=plot_types, filtration=f,
+                               plot_args_mesh = plot_args_mesh, plot_args_diag=plot_args_diag,
+                               plot_args_line=plot_args_line, plot_type_to_fun=plot_type_to_fun)
     return eigenvalues, relevant_times, fig, ax
 
 def plot_non_persistent_eigenvalues(eigenvalues, relevant_times, plot_type="all"):
