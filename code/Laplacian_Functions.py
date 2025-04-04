@@ -92,6 +92,7 @@ def compute_boundary_matrices(f: d.Filtration, weight_fun):
     relevant_times.append(s.data)
     n_simplicies_seen_per_time.append(deepcopy(n_simplicies_seen_total))
     maxq = len(n_simplicies_seen_per_time[-1])
+    print("Max q:", maxq)
     for qi in range(len(n_simplicies_seen_per_time)):
         n_simplicies_seen_per_time[qi] = n_simplicies_seen_per_time[qi] + [0]*(maxq-len(n_simplicies_seen_per_time[qi]))
 
@@ -101,14 +102,15 @@ def compute_boundary_matrices(f: d.Filtration, weight_fun):
             return n_simplicies_seen_per_time[-1]
         while relevant_times[i] < t:
             i += 1
-            if i == len(relevant_times) - 1:
+            if i >= len(relevant_times) - 1: # CHanged this to >= from ==.
                 return n_simplicies_seen_per_time[-1]
         return n_simplicies_seen_per_time[i]
 
     simplices_at_end = simplices_at_time(np.inf)
 
     # boundary_matrices = [0] + [np.zeros((simplices_at_end[q-1], simplices_at_end[q])) for q in range(1, maxq)]
-    boundary_matrices = [np.zeros((simplices_at_end[max(0,q-1)], simplices_at_end[q])) for q in range(maxq)]
+    boundary_matrices = [np.zeros((simplices_at_end[max(0,q-1)], simplices_at_end[q])) for q in range(maxq)] + [np.zeros((1,1))]
+    print(f"boundary_matrices:\n{len(boundary_matrices)}")
     name_to_idx = [{} for _ in range(maxq)]
     for s in f:
         q = s.dimension()
@@ -312,27 +314,30 @@ def compute_cross_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False, us
     if verb:
         print("Laplacian s to t")
     Lap_ij = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time, verb=verb)
+    Lap_ij = np.linalg.pinv(Lap_ij)@Lap_ij
 
     if verb:
         print("Laplacian s to t-1")
     Lap_ijm1 = persistent_Laplacian_filtration(q, boundary_matrices, s, t-1, simplices_at_time, verb=verb)
+    Lap_ijm1 = np.linalg.pinv(Lap_ijm1)@Lap_ijm1
 
-    if use_4:
+    if s >= 1:
         if verb:
             print("Laplacian s-1 to t-1")
-        Lap_im1jm1 = persistent_Laplacian_filtration(q, boundary_matrices, s-1, t-1, simplices_at_time, verb=verb)
+        Lap_im1jm1 = np.eye(simplices_at_time(s)[q])
+        Lap_temp = persistent_Laplacian_filtration(q, boundary_matrices, s-1, t-1, simplices_at_time, verb=verb)
+        Lap_im1jm1[:simplices_at_time(s-1)[q], :simplices_at_time(s-1)[q]] = np.linalg.pinv(Lap_temp)@Lap_temp
 
         if verb:
             print("Laplacian s-1 to t")
-        Lap_im1j = persistent_Laplacian_filtration(q, boundary_matrices, s-1, t, simplices_at_time, verb=verb) 
-        
-        part_sm1 = Lap_im1jm1 - Lap_im1j
-        b = np.zeros_like(Lap_ij)
-        b[:part_sm1.shape[0], :part_sm1.shape[1]] = part_sm1
-        return  -1*((Lap_ijm1 - Lap_ij) - (b))
+        Lap_im1j = np.eye(simplices_at_time(s)[q])
+        Lap_temp = persistent_Laplacian_filtration(q, boundary_matrices, s-1, t, simplices_at_time, verb=verb) 
+        Lap_im1j[:simplices_at_time(s-1)[q], :simplices_at_time(s-1)[q]] =np.linalg.pinv(Lap_temp)@Lap_temp
+
+        return  Lap_ijm1 - Lap_ij - (Lap_im1jm1 - Lap_im1j)
     
     else:
-        return  -1*(Lap_ijm1 - Lap_ij)
+        return  (Lap_ijm1 - Lap_ij)
     
 
 def compute_vertical_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False, use_restriction = False):
@@ -572,52 +577,59 @@ def cross_Laplacian_eigenvalues(f, weight_fun, max_dim = 1, use_4 = False):
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
 
     laplacians = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
     
     print("Computing laplacians...")
     for q in range(max_dim+1):
         t_i_bar = tqdm(range(len(relevant_times)), leave=False)
         for t_i in t_i_bar:
-            for s_i in range(t_i+1):
-                t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
-                s, t = relevant_times[s_i], relevant_times[t_i]
-                Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time)
-                laplacians[q][s][t] = Lap
-
-    eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
-    print("Computing eigenvalues...")
-    for q in range(max_dim+1):
-        t_i_bar = tqdm(range(len(relevant_times)), leave=False)
-        for t_i in t_i_bar:
             for s_i in range(t_i):
                 t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
-                s, t, tm1 = relevant_times[s_i], relevant_times[t_i], relevant_times[t_i-1] 
-                if s_i != 0 and use_4:
-                    sm1 = relevant_times[s_i-1]
-                    Lap_im1jm1 = laplacians[q][sm1][tm1]
-                    Lap_im1j = laplacians[q][sm1][t]
-                    part_im1 = Lap_im1jm1 - Lap_im1j
-                else:
-                    part_im1 = np.zeros((1,1))
-
-                Lap_ij = laplacians[q][s][t]
-                Lap_ijm1 = laplacians[q][s][tm1]
-
-                if use_4:
-                    b = np.zeros_like(Lap_ij)
-                    b[:part_im1.shape[0], :part_im1.shape[1]] = part_im1
-                    cross_Lap = -1*((Lap_ijm1 - Lap_ij) - (b))
-                else:
-                    cross_Lap = Lap_ij-Lap_ijm1
-                
+                s, t = relevant_times[s_i], relevant_times[t_i]
+                # Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time)
                 try:
-                    eigenvalues[q][s][t] = np.linalg.eigvalsh(cross_Lap)
+                    Lap = compute_cross_Laplacian(f, q, s, t, weight_fun=weight_fun)
                 except:
-                    print(f"s: {s}, t: {t}, q: {q}")
-                    print(f"Lap_ij\n{Lap_ij}")
-                    print(f"Lap_ijm1\n{Lap_ijm1}")
-                    if s_i != 0:
-                        print(f"b:\n{b}")
+                    print(s, t)
                     raise ValueError
+                # laplacians[q][s][t] = Lap
+                eigenvalues[q][s][t] = np.linalg.eigvalsh(Lap)
+
+    # eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    # print("Computing eigenvalues...")
+    # for q in range(max_dim+1):
+    #     t_i_bar = tqdm(range(len(relevant_times)), leave=False)
+    #     for t_i in t_i_bar:
+    #         for s_i in range(t_i):
+    #             t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
+    #             s, t, tm1 = relevant_times[s_i], relevant_times[t_i], relevant_times[t_i-1] 
+    #             if s_i != 0 and use_4:
+    #                 sm1 = relevant_times[s_i-1]
+    #                 Lap_im1jm1 = laplacians[q][sm1][tm1]
+    #                 Lap_im1j = laplacians[q][sm1][t]
+    #                 part_im1 = Lap_im1jm1 - Lap_im1j
+    #             else:
+    #                 part_im1 = np.zeros((1,1))
+
+    #             Lap_ij = laplacians[q][s][t]
+    #             Lap_ijm1 = laplacians[q][s][tm1]
+
+    #             if use_4:
+    #                 b = np.zeros_like(Lap_ij)
+    #                 b[:part_im1.shape[0], :part_im1.shape[1]] = part_im1
+    #                 cross_Lap = -1*((Lap_ijm1 - Lap_ij) - (b))
+    #             else:
+    #                 cross_Lap = Lap_ij-Lap_ijm1
+                
+    #             try:
+    #                 eigenvalues[q][s][t] = np.linalg.eigvalsh(cross_Lap)
+    #             except:
+    #                 print(f"s: {s}, t: {t}, q: {q}")
+    #                 print(f"Lap_ij\n{Lap_ij}")
+    #                 print(f"Lap_ijm1\n{Lap_ijm1}")
+    #                 if s_i != 0:
+    #                     print(f"b:\n{b}")
+    #                 raise ValueError
 
     return eigenvalues, relevant_times
 
