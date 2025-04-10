@@ -85,14 +85,16 @@ def compute_boundary_matrices(f: d.Filtration, weight_fun):
             t_old = s.data
 
         q = s.dimension()
-        if q >= len(n_simplicies_seen_total):
+        while q >= len(n_simplicies_seen_total):
             n_simplicies_seen_total.append(0)
         n_simplicies_seen_total[q] += 1
+
+    # To be safe add a q+1 entry, in case of cycles appearing in q+1, but not boundaries.
+    n_simplicies_seen_total.append(0)
 
     relevant_times.append(s.data)
     n_simplicies_seen_per_time.append(deepcopy(n_simplicies_seen_total))
     maxq = len(n_simplicies_seen_per_time[-1])
-    print("Max q:", maxq)
     for qi in range(len(n_simplicies_seen_per_time)):
         n_simplicies_seen_per_time[qi] = n_simplicies_seen_per_time[qi] + [0]*(maxq-len(n_simplicies_seen_per_time[qi]))
 
@@ -102,15 +104,14 @@ def compute_boundary_matrices(f: d.Filtration, weight_fun):
             return n_simplicies_seen_per_time[-1]
         while relevant_times[i] < t:
             i += 1
-            if i >= len(relevant_times) - 1: # CHanged this to >= from ==.
+            if i >= len(relevant_times) - 1: # Changed this to >= from ==.
                 return n_simplicies_seen_per_time[-1]
         return n_simplicies_seen_per_time[i]
 
     simplices_at_end = simplices_at_time(np.inf)
 
     # boundary_matrices = [0] + [np.zeros((simplices_at_end[q-1], simplices_at_end[q])) for q in range(1, maxq)]
-    boundary_matrices = [np.zeros((simplices_at_end[max(0,q-1)], simplices_at_end[q])) for q in range(maxq)] + [np.zeros((1,1))]
-    print(f"boundary_matrices:\n{len(boundary_matrices)}")
+    boundary_matrices = [np.zeros((simplices_at_end[max(0,q-1)], simplices_at_end[q])) for q in range(maxq)]
     name_to_idx = [{} for _ in range(maxq)]
     for s in f:
         q = s.dimension()
@@ -427,11 +428,25 @@ def complete_analysis_fast(f: d.Filtration, weight_fun, max_dim = 1):
                     evals_im1jm1, bim1jm1, pim1jm1, evals_im1j, bim1j, pim1j = [], 0, 1, [], 0, 1
 
                 
-                if bijm1-bij-(bim1jm1-bim1j) > 0:
+                # if bijm1-bij-(bim1jm1-bim1j) > 0:
+                #     barcodes["q"].append(q)
+                #     barcodes["birth"].append(s)
+                #     barcodes["death"].append(t)
+                #     barcodes["multiplicity"].append(bijm1-bij-(bim1jm1-bim1j))
+                #     barcodes["eigenvalues_ijm1"].append(evals_ijm1)
+                #     barcodes["eigenvalues_ij"].append(evals_ij)
+                #     barcodes["eigenvalues_im1jm1"].append(evals_im1jm1)
+                #     barcodes["eigenvalues_im1j"].append(evals_im1j)
+                #     barcodes["p_ijm1"].append(pijm1)
+                #     barcodes["p_ij"].append(pij)
+                #     barcodes["p_im1jm1"].append(pim1jm1)
+                #     barcodes["p_im1j"].append(pim1j)
+
+                if bijm1-bij > 0:
                     barcodes["q"].append(q)
                     barcodes["birth"].append(s)
                     barcodes["death"].append(t)
-                    barcodes["multiplicity"].append(bijm1-bij-(bim1jm1-bim1j))
+                    barcodes["multiplicity"].append(bijm1-bij)
                     barcodes["eigenvalues_ijm1"].append(evals_ijm1)
                     barcodes["eigenvalues_ij"].append(evals_ij)
                     barcodes["eigenvalues_im1jm1"].append(evals_im1jm1)
