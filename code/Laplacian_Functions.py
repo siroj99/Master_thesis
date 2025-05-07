@@ -707,7 +707,7 @@ def eig_plot_helper(x, fun, eps = 1e-8):
     else:
         return np.nan
 
-def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration = None, 
+def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration = None, integer_time_steps = False,
                      plot_args_mesh = {}, 
                      plot_args_diag = {},
                      plot_args_line = {},
@@ -778,6 +778,9 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
             ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], plot_type_to_fun[plot_type]) for t in relevant_times for _ in (0,1)][:-1], **plot_args_line)
             if plot_type == "Prod":
                 ax_n.set_yscale("log")
+
+            if integer_time_steps:
+                cur_ax(q, ax_i).yaxis.set_major_locator(plt.MaxNLocator(integer=True))
         cur_ax(q, 0).set_ylabel(f"q={q}")
     fig.tight_layout()
     return fig, ax

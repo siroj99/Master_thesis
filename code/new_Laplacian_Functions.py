@@ -1,4 +1,5 @@
 from multiprocessing import Value
+from re import A, I
 from matplotlib.pylab import LinAlgError
 import numpy as np
 from copy import deepcopy
@@ -326,10 +327,14 @@ def cross_Laplacian_extended(q, boundary_matrices, s_i, t_i, simplices_at_time, 
         B22_mult_tm1sm1 = B22_stm1_full@B22_sm1t_full
         B22_mult_sm1tm1 = B22_sm1t_full@B22_stm1_full
         if verb:
+            print(f"A_matrix:\n{QR_matrix}")
             print(f"B22_st_full:\n{np.round(B22_st_full,5)}")
             print(f"B22_stm1_full:\n{np.round(B22_stm1_full,5)}")
             print(f"B22_sm1t_full:\n{np.round(B22_sm1t_full,5)}")
             print(f"B22_sm1tm1_full:\n{np.round(B22_sm1tm1_full,5)}")
+            print(f"B22_stm1_full@B22_sm1t_full:\n{np.round(B22_stm1_full@B22_sm1t_full,5)}")
+            print(f"A_matrix@B22_stm1_full@B22_sm1t_full@A_matrix^T:\n{np.round(QR_matrix@(B22_stm1_full@B22_sm1t_full)@QR_matrix.T, 5)}")
+            print(f"A_matrix@B22_sm1t_full@B22_stm1_full@A_matrix^T:\n{np.round(QR_matrix@(B22_sm1t_full@B22_stm1_full)@QR_matrix.T, 5)}")
         
         # first_projection = B22_stm1_full@(eye_sm1t-B22_st_full)@np.linalg.pinv(B22_stm1_full@(eye_sm1t-B22_st_full))
         # return QR_matrix@(B22_sm1t_full@first_projection@np.linalg.pinv(B22_sm1t_full@first_projection))@QR_matrix.T
@@ -340,18 +345,46 @@ def cross_Laplacian_extended(q, boundary_matrices, s_i, t_i, simplices_at_time, 
         # return QR_matrix@(Pa-Pa@np.linalg.pinv(Pa@(eye_sm1t-Pb)))@QR_matrix.T
 
         if verb:
-            # Test_m1 = B22_sm1t_full@B22_stm1_full@(eye_sm1t-B22_st_full)@B22_stm1_full@B22_sm1t_full
-            # print(f"Test Matrix 1:\n{np.round(Test_m1, 5)}")
-            # evals, evecs = np.linalg.eig(np.round(Test_m1, 5))
-            # for i, eval in enumerate(evals):
-            #     # if np.abs(eval) > 1e-8:
-            #     print("eval:", eval)
-            #     evec = evecs[:,i]
-            #     print("normalized evec", np.round(evec, 5))
-            #     print("denormalized evec",np.round(evec/np.min(np.abs(evec[np.abs(evec) > 1e-8])),5))
-            #     print()
+            # VS = scipy.linalg.null_space(B22_st_full)
+            # print(f"VS ({VS.shape}):\n{VS}")
+            # G = VS.T@QR_matrix.T@QR_matrix@VS
+            # print(f"G:\n{np.round(G, 5)}")
+            # P1 = VS.T@B22_stm1_full@VS
+            # P2 = VS.T@B22_sm1t_full@VS
+
+            # Test_m1 = G@P1@P2
+            Test_m1 = np.round(B22_stm1_full@(eye_sm1t-B22_st_full), 6)
+            print(f"Test Matrix 1:\n{np.round(Test_m1, 4)}")
+            evals, evecs = np.linalg.eigh(np.round(Test_m1, 4))
+            ker_B22 = []
+            for i, eval in enumerate(evals.real):
+                if eval > 1e-8:
+                    ker_B22.append(evecs[:,i].real)
+                # if np.abs(eval) > 1e-8:
+                print("eval:", eval)
+                evec = evecs[:,i].real
+                print("normalized evec", np.round(evec, 4))
+                print("denormalized evec",np.round(evec/np.min(np.abs(evec[np.abs(evec) > 1e-8])),4))
+                print()
             
-            # Test_m2 = B22_stm1_full@(eye_sm1t-B22_st_full)@B22_stm1_full@B22_sm1t_full
+            for v in ker_B22:
+                print("v:", np.round(v,4))
+                print("Av:", np.round(QR_matrix@v,4))
+                print("AP^s-1,tv:", np.round(QR_matrix@B22_sm1t_full@v,4))
+                print()
+                # print("ori calc:", np.linalg.norm(QR_matrix@B22_sm1tm1_full@v)**2 - np.linalg.norm(QR_matrix@B22_sm1t_full@v)**2 - np.linalg.norm(QR_matrix@B22_stm1_full@v)**2)
+                # print("new calc:", (QR_matrix@B22_stm1_full@v).T@(QR_matrix@B22_sm1t_full@v))
+                # print("newest calc:",0.5*(np.linalg.norm(QR_matrix@(B22_sm1t_full + B22_stm1_full)@v)**2 - np.linalg.norm(QR_matrix@B22_sm1t_full@v)**2 - np.linalg.norm(QR_matrix@B22_stm1_full@v)**2))
+                # print("final calc:",0.5*(-1*np.linalg.norm(QR_matrix@(B22_sm1t_full - B22_stm1_full)@v)**2 + np.linalg.norm(QR_matrix@B22_sm1t_full@v)**2 + np.linalg.norm(QR_matrix@B22_stm1_full@v)**2))
+
+                # print("left side:", np.round(np.linalg.norm(QR_matrix@B22_sm1tm1_full@v)**2 - 0.5*np.linalg.norm(QR_matrix@(B22_sm1t_full - B22_stm1_full)@v)**2, 5))
+                # print("right side:", np.round(0.5*(np.linalg.norm(QR_matrix@B22_sm1t_full@v)**2 + np.linalg.norm(QR_matrix@B22_stm1_full@v)**2), 5))
+                # print("sm1tm1:", np.round(np.linalg.norm(QR_matrix@B22_sm1tm1_full@v)**2, 5))
+                # print("sm1t:", np.round(np.linalg.norm(QR_matrix@B22_sm1t_full@v)**2, 5))
+                # print("stm1:", np.round(np.linalg.norm(QR_matrix@B22_stm1_full@v)**2, 5))
+                # print("sm1 - tm1:", np.round(0.5*np.linalg.norm(QR_matrix@(B22_sm1t_full - B22_stm1_full)@v)**2, 5))
+                # print("sm1 + tm1:", np.round(0.5*np.linalg.norm(QR_matrix@(B22_sm1t_full + B22_stm1_full)@v)**2, 5))
+            # Test_m2 = B22_sm1t_full@(eye_sm1t-B22_st_full)@B22_sm1t_full@B22_stm1_full
             # print(f"Test Matrix 2:\n{np.round(Test_m2, 5)}")
             # evals, evecs = np.linalg.eig(np.round(Test_m2, 5))
             # for i, eval in enumerate(evals):
@@ -362,7 +395,7 @@ def cross_Laplacian_extended(q, boundary_matrices, s_i, t_i, simplices_at_time, 
             #     print("denormalized evec",np.round(evec/np.min(np.abs(evec[np.abs(evec) > 1e-8])),5))
             #     print()
 
-            # Test_m3 = B22_sm1t_full@B22_stm1_full@(eye_sm1t-B22_st_full)@B22_stm1_full
+            # Test_m3 = B22_stm1_full@B22_sm1t_full@(eye_sm1t-B22_st_full)@B22_sm1t_full
             # print(f"Test Matrix:\n{np.round(Test_m3, 5)}")
             # evals, evecs = np.linalg.eig(np.round(Test_m3, 5))
             # for i, eval in enumerate(evals):
@@ -372,39 +405,6 @@ def cross_Laplacian_extended(q, boundary_matrices, s_i, t_i, simplices_at_time, 
             #     print("normalized evec", np.round(evec, 5))
             #     print("denormalized evec",np.round(evec/np.min(np.abs(evec[np.abs(evec) > 1e-8])),5))
             #     print()
-
-            Test_m1 = B22_stm1_full@B22_sm1t_full@(eye_sm1t-B22_st_full)@B22_sm1t_full@B22_stm1_full
-            print(f"Test Matrix 1:\n{np.round(Test_m1, 5)}")
-            evals, evecs = np.linalg.eig(np.round(Test_m1, 5))
-            for i, eval in enumerate(evals):
-                # if np.abs(eval) > 1e-8:
-                print("eval:", eval)
-                evec = evecs[:,i]
-                print("normalized evec", np.round(evec, 5))
-                print("denormalized evec",np.round(evec/np.min(np.abs(evec[np.abs(evec) > 1e-8])),5))
-                print()
-            
-            Test_m2 = B22_sm1t_full@(eye_sm1t-B22_st_full)@B22_sm1t_full@B22_stm1_full
-            print(f"Test Matrix 2:\n{np.round(Test_m2, 5)}")
-            evals, evecs = np.linalg.eig(np.round(Test_m2, 5))
-            for i, eval in enumerate(evals):
-                # if np.abs(eval) > 1e-8:
-                print("eval:", eval)
-                evec = evecs[:,i]
-                print("normalized evec", np.round(evec, 5))
-                print("denormalized evec",np.round(evec/np.min(np.abs(evec[np.abs(evec) > 1e-8])),5))
-                print()
-
-            Test_m3 = B22_stm1_full@B22_sm1t_full@(eye_sm1t-B22_st_full)@B22_sm1t_full
-            print(f"Test Matrix:\n{np.round(Test_m3, 5)}")
-            evals, evecs = np.linalg.eig(np.round(Test_m3, 5))
-            for i, eval in enumerate(evals):
-                # if np.abs(eval) > 1e-8:
-                print("eval:", eval)
-                evec = evecs[:,i]
-                print("normalized evec", np.round(evec, 5))
-                print("denormalized evec",np.round(evec/np.min(np.abs(evec[np.abs(evec) > 1e-8])),5))
-                print()
 
 
 
@@ -502,7 +502,7 @@ def cross_Laplacian_extended(q, boundary_matrices, s_i, t_i, simplices_at_time, 
 
 
 
-def cross_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, method = "cor10"):
+def cross_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, method = "cor10", Laplacian_fun = None):
     f.sort()
 
     if method == "cor10":
@@ -530,10 +530,16 @@ def cross_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, me
                 s, t = relevant_times[s_i], relevant_times[t_i]
 
                 try:
-                    Lap = cross_Laplacian_f(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times=relevant_times)
+                    if method == "cross_extended":
+                        Lap = cross_Laplacian_f(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times=relevant_times, Laplacian_fun=Laplacian_fun)
+                    else:
+                        Lap = cross_Laplacian_f(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times=relevant_times)
                 except:
                     print(s,t)
-                    Lap = cross_Laplacian_f(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times=relevant_times, verb=True)
+                    if method == "cross_extended":
+                        Lap = cross_Laplacian_f(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times=relevant_times, Laplacian_fun=Laplacian_fun, verb=True)
+                    else:
+                        Lap = cross_Laplacian_f(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times=relevant_times, verb=True)
                     raise ValueError
                 
                 eigenvalues[q][s][t] = np.linalg.eigvals(Lap).real
@@ -541,7 +547,7 @@ def cross_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, me
                     print(f"q: {q}, s: {s}, t: {t}, evals: {eigenvalues[q][s][t]}, Lap:\n{Lap}")
     return eigenvalues, relevant_times
     
-def cross_Laplaican_eigenvalues_fast(f: d.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None):
+def cross_Laplaican_eigenvalues_fast(f: d.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, use_greville = False):
     f.sort()
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
     eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
@@ -551,29 +557,97 @@ def cross_Laplaican_eigenvalues_fast(f: d.Filtration, weight_fun = lambda x: 1, 
         Laplacian_fun = lambda B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye: B22_sm1t@B22_stm1@(eye-B22_st)@B22_stm1@B22_sm1t
     
     print("Calculating projection matrices...")
-    for q in range(max_dim+1):
-        t_i_bar = tqdm(range(len(relevant_times)), leave=False)
-        for t_i in t_i_bar:
-            for s_i in range(t_i+1):
-                t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
-                s, t = relevant_times[s_i], relevant_times[t_i]
-                B22 = boundary_matrices[q+1][simplices_at_time(s)[q]:simplices_at_time(t)[q], simplices_at_time(s)[q+1]:simplices_at_time(t)[q+1]]
-                
-                try:
-                    projection_matrices[q][s_i][t_i] = np.linalg.pinv(B22)@B22
-                except LinAlgError:
-                    print("RAN INTO ERROR !!!")
-                    print(f"s: {s}, t: {t}")
+    # Normal way
+    if not use_greville:
+        for q in range(max_dim+1):
+            t_i_bar = tqdm(range(len(relevant_times)), leave=False)
+            for t_i in t_i_bar:
+                for s_i in range(t_i+1):
+                    t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
+                    s, t = relevant_times[s_i], relevant_times[t_i]
+                    B22 = boundary_matrices[q+1][simplices_at_time(s)[q]:simplices_at_time(t)[q], simplices_at_time(s)[q+1]:simplices_at_time(t)[q+1]]
+                    
+                    try:
+                        projection_matrices[q][s_i][t_i] = np.linalg.pinv(B22)@B22
+                    except LinAlgError:
+                        print("RAN INTO ERROR !!!")
+                        print(f"s: {s}, t: {t}")
 
-                    projection_matrices[q][s_i][t_i] = np.eye(simplices_at_time(t)[q+1] - simplices_at_time(s)[q+1])
-                    # np.savetxt("Error.txt", B22)
-                    # return
-    
+                        projection_matrices[q][s_i][t_i] = np.eye(simplices_at_time(t)[q+1] - simplices_at_time(s)[q+1])
+                        # np.savetxt("Error.txt", B22)
+                        # return
+
+    # Greville way
+    else:
+        for q in range(max_dim+1):
+            
+            s_i_bar = tqdm(range(len(relevant_times)), leave=False)
+            for s_i in s_i_bar:
+                s = relevant_times[s_i]
+
+                # NOTE: if n_q^K==n_q^L, then the persistent up-laplacian is just the combinatorial up-laplacian in L. Therefore, we can let B22 be 0.
+                # NOTE: if n_q+1^K==n_q+1^L, then the persistent up-laplacian is just the combinatorial up-laplacian in K. Therefore, we can let B22 be the identity.
+                obtained_B22 = False
+                for t_i in range(s_i, len(relevant_times)):
+                    s_i_bar.set_description(f"t_i: {t_i}/{len(relevant_times)}")
+                    t = relevant_times[t_i]
+                    # tm1 = relevant_times[t_i-1]
+                    
+                    if not obtained_B22:
+                        if simplices_at_time(t)[q+1] == simplices_at_time(s)[q+1]:
+                            projection_matrices[q][s_i][t_i] = np.zeros((0,0))
+                        elif simplices_at_time(t)[q] == simplices_at_time(s)[q]:
+                            projection_matrices[q][s_i][t_i] = np.zeros((simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1]))
+                        else:
+                            A_km1 = boundary_matrices[q+1][simplices_at_time(s)[q]:simplices_at_time(t)[q], simplices_at_time(s)[q+1]:simplices_at_time(t)[q+1]]
+                            A_km1_pinv = np.linalg.pinv(A_km1)
+                            projection_matrices[q][s_i][t_i] = A_km1_pinv@A_km1
+                            t_A_km1 = t
+                            obtained_B22 = True
+                    else:
+                        changed_B22 = False
+                        if simplices_at_time(t)[q] > simplices_at_time(t_A_km1)[q]:
+                            # NOTE: Not necessary, can also just use boundary matrices to get it. But this makes it more clear.
+                            A_km1_new = np.zeros((simplices_at_time(t)[q]-simplices_at_time(s)[q], simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1]))
+                            A_km1_new[:A_km1.shape[0], :A_km1.shape[1]] = A_km1
+                            A_km1 = A_km1_new
+
+                            A_km1_pinv_new = np.zeros((simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q]-simplices_at_time(s)[q]))
+                            A_km1_pinv_new[:A_km1_pinv.shape[0], :A_km1_pinv.shape[1]] = A_km1_pinv
+                            A_km1_pinv = A_km1_pinv_new
+
+                            changed_B22 = True
+                        
+                        if simplices_at_time(t)[q+1] > simplices_at_time(t_A_km1)[q+1]:
+                            # Use the update rule from Greville.
+                            for col in range(simplices_at_time(t_A_km1)[q+1], simplices_at_time(t)[q+1]):
+                                a_k = boundary_matrices[q+1][simplices_at_time(s)[q]:simplices_at_time(t)[q], [col]]
+
+                                d_k = A_km1_pinv@a_k
+                                c_k = a_k - A_km1@d_k
+
+                                norm_c_k_sq = np.linalg.norm(c_k)**(2)
+                                if norm_c_k_sq > 1e-10:
+                                    # b_k = np.linalg.pinv(c_k)
+                                    b_k = c_k.T/norm_c_k_sq
+                                else:
+                                    b_k = (1 + d_k.T@d_k)**(-1)*d_k.T@A_km1_pinv
+                                A_km1_pinv = np.vstack((A_km1_pinv-d_k@b_k, b_k))
+                                A_km1 = np.hstack((A_km1, a_k))
+                            changed_B22 = True
+                            
+                        
+                        if changed_B22:
+                            t_A_km1 = t
+                            projection_matrices[q][s_i][t_i] = A_km1_pinv@A_km1
+                        else:
+                            projection_matrices[q][s_i][t_i] = projection_matrices[q][s_i][t_i-1]
+
     print("Calculating Laplacians and eigenvalues...")
     for q in range(max_dim+1):
         t_i_bar = tqdm(range(1, len(relevant_times)), leave=False)
         for t_i in t_i_bar:
-            for s_i in range(t_i+1):
+            for s_i in range(t_i):
                 t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
                 s, t, tm1 = relevant_times[s_i], relevant_times[t_i], relevant_times[t_i-1]
 
@@ -596,12 +670,8 @@ def cross_Laplaican_eigenvalues_fast(f: d.Filtration, weight_fun = lambda x: 1, 
                     B22_sm1tm1 = deepcopy(eye)
                     B22_sm1tm1[:(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1])] = projection_matrices[q][s_i-1][t_i-1]
 
-                    if s==2 and t==8:
-                        print(f"B22_st:\n{np.round(B22_st,5)}")
-                        print(f"B22_stm1:\n{np.round(B22_stm1,5)}")
-                        print(f"B22_sm1t:\n{np.round(B22_sm1t,5)}")
-
                     cross_Lap = A_matrix@Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)@A_matrix.T
+                    # cross_Lap = Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)
 
                     eigenvalues[q][s][t] = np.linalg.eigvals(cross_Lap).real
                 
@@ -646,7 +716,7 @@ def calc_vertical_extended(f: d.Filtration, q, s, t, weight_fun = lambda x: 1, v
     s_i = np.argmin(np.abs(relevant_times - s))
     return vertical_Laplacian_extended(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=verb)
 
-def plot_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plot_types = "all", method = "cor10", Laplacian_fun = None,
+def plot_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plot_types = "all", method = "cor10", Laplacian_fun = None, integer_time_steps = False,
                      plot_args_mesh = {}, 
                      plot_args_diag = {},
                      plot_args_line = {},
@@ -654,12 +724,16 @@ def plot_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plo
     """
     lapalcian_type: "persistent" for normal laplacian, or "cross" for cross laplacian, "cross_cor10" for cross Laplacian in two directions.
     """
-    if method != "fast":
+    if method not in ["fast", "greville"]:
         eigenvalues, relevant_times = cross_Laplacian_new_eigenvalues(f, weight_fun, max_dim=max_dim, method = method)
     else:
-        eigenvalues, relevant_times = cross_Laplaican_eigenvalues_fast(f, weight_fun=weight_fun, max_dim=max_dim, Laplacian_fun=Laplacian_fun)
+        if method == "fast":
+            eigenvalues, relevant_times = cross_Laplaican_eigenvalues_fast(f, weight_fun=weight_fun, max_dim=max_dim, Laplacian_fun=Laplacian_fun)
+        else:
+            eigenvalues, relevant_times = cross_Laplaican_eigenvalues_fast(f, weight_fun=weight_fun, max_dim=max_dim, Laplacian_fun=Laplacian_fun, use_greville=True)
+        
 
-    fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_types=plot_types, filtration=f,
+    fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_types=plot_types, filtration=f, integer_time_steps=integer_time_steps,
                                plot_args_mesh = plot_args_mesh, plot_args_diag=plot_args_diag,
                                plot_args_line=plot_args_line, plot_type_to_fun=plot_type_to_fun)
     return eigenvalues, relevant_times, fig, ax
