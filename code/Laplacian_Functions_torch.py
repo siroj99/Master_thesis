@@ -1,7 +1,8 @@
+import array
 from matplotlib.pylab import LinAlgError
 import numpy as np
 from copy import deepcopy
-import dionysus as d
+import dionysus as dio
 import scipy
 import scipy.stats as ss
 import pandas as pd
@@ -9,10 +10,13 @@ from sympy import use
 from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
 import gudhi as gd
+
+import time
 import torch
+from torch.nn import functional as F
 torch.set_default_dtype(torch.float64)
 
-def compute_boundary_matrices(f: d.Filtration, weight_fun, device = "cuda"):
+def compute_boundary_matrices(f: dio.Filtration, weight_fun, device = "cuda"):
     t_old = 0
     relevant_times = []
     n_simplicies_seen_per_time = []
@@ -39,14 +43,18 @@ def compute_boundary_matrices(f: d.Filtration, weight_fun, device = "cuda"):
         n_simplicies_seen_per_time[qi] = n_simplicies_seen_per_time[qi] + [0]*(maxq-len(n_simplicies_seen_per_time[qi]))
 
     def simplices_at_time(t):
-        i = 0
+        # i = 0
         if t == torch.inf:
             return n_simplicies_seen_per_time[-1]
-        while relevant_times[i] < t:
-            i += 1
-            if i >= len(relevant_times) - 1: # Changed this to >= from ==.
-                return n_simplicies_seen_per_time[-1]
+        
+        i = np.searchsorted(relevant_times, t) 
+        # while relevant_times[i] < t:
+        #     i += 1
+        #     if i >= len(relevant_times) - 1: # Changed this to >= from ==.
+        #         return n_simplicies_seen_per_time[-1]
         return n_simplicies_seen_per_time[i]
+    
+    relevant_times = np.array(relevant_times)
 
     simplices_at_end = simplices_at_time(torch.inf)
 
@@ -77,7 +85,7 @@ def compute_boundary_matrices(f: d.Filtration, weight_fun, device = "cuda"):
                 #         break
                 # boundary_matrices[q][idx_bdry_simplex, idx] = weight_fun(name_bdry_simplex)*(-1)**i
 
-    print("Computing boundary matrices done.")
+    # print("Computing boundary matrices done.")
 
     return boundary_matrices, name_to_idx, simplices_at_time, relevant_times
 
@@ -216,14 +224,14 @@ def cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_
 
     return B12_st@(eye_st-B22_st_full)@B22_stm1_full@B12_st.T
 
-def calc_cross(f: d.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False, Laplacian_fun = None, device = "cuda"):
+def calc_cross(f: dio.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False, Laplacian_fun = None, device = "cuda"):
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, device=device)
-    relevant_times = torch.tensor(relevant_times, dtype=torch.float64, device = device)
-    t_i = torch.argmin(torch.abs(relevant_times - t))
-    s_i = torch.argmin(torch.abs(relevant_times - s))
+    # relevant_times = torch.tensor(relevant_times, dtype=torch.float64, device = device)
+    t_i = np.argmin(np.abs(relevant_times - t))
+    s_i = np.argmin(np.abs(relevant_times - s))
     return cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=verb, Laplacian_fun= Laplacian_fun)
 
-def cross_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, Laplacian_fun = None, device = "cuda"):
+def cross_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, Laplacian_fun = None, device = "cuda"):
     f.sort()
 
     max_time = f[len(f)-1].data
@@ -250,18 +258,25 @@ def cross_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, La
                 #     print(f"q: {q}, s: {s}, t: {t}, evals: {eigenvalues[q][s][t]}, Lap:\n{Lap}")
     return eigenvalues, relevant_times
 
-def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, device = "cuda"):
+def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, device = "cuda"):
     f.sort()
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, device=device)
     eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    # eigenvalues = {q: {s: {relevant_times[0]: []} if s==relevant_times[0] else {} for s in relevant_times} for q in range(max_dim+1)}
     # projection_matrices = {q: {s: {t: torch.tensor([], dtype=torch.float64) for t in range(len(relevant_times))} for s in  range(len(relevant_times))} for q in range(max_dim+1)}
     
     if Laplacian_fun is None:
         Laplacian_fun = lambda B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye: B22_sm1t@B22_stm1@(eye-B22_st)@B22_stm1@B22_sm1t
     
-    for q in range(max_dim+1):
+    for q in range(max_dim+1): # TODO: CHANGE THIS!!!!!!!!!!!!!
         projection_matrices = {"sm1": {t: None for t in range(len(relevant_times))}, "s": {t: None for t in range(len(relevant_times))}}
         s_i_bar = tqdm(range(len(relevant_times)-1), leave=False)
+        pinv_total_time = 0
+        greville_total_time = 0
+        lap_total_time = 0
+        eig_total_time = 0
+        save_total_time = 0
+
         for s_i in s_i_bar:
             s = relevant_times[s_i]
 
@@ -269,16 +284,17 @@ def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda
             # NOTE: if n_q+1^K==n_q+1^L, then the persistent up-laplacian is just the combinatorial up-laplacian in K. Therefore, we can let B22 be the identity.
             obtained_B22 = False
             for t_i in range(s_i, len(relevant_times)):
-                s_i_bar.set_description(f"t_i: {t_i}/{len(relevant_times)}")
+                s_i_bar.set_description(f"t_i: {t_i}/{len(relevant_times)}({int(obtained_B22)}), pinv: {pinv_total_time:.2f}, lap: {lap_total_time:.2f}, grev: {greville_total_time:.2f}, eig: {eig_total_time:.2f}, save: {save_total_time:.2f}")
                 t = relevant_times[t_i]
                 # tm1 = relevant_times[t_i-1]
 
                 # Get B22^(-1)@B22
+                stime = time.time()
                 if not obtained_B22:
                     if simplices_at_time(t)[q+1] == simplices_at_time(s)[q+1]:
                         cur_B22 = torch.zeros((0,0), device = device)
                     elif simplices_at_time(t)[q] == simplices_at_time(s)[q]:
-                        cur_B22 = torch.zeros((simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1]), device = device)
+                        cur_B22 = 0#torch.zeros((simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1]), device = device)
 
                         # Think this is okay
                         # eigenvalues[q][s][t] = np.array([0])
@@ -290,87 +306,140 @@ def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda
                         t_A_km1 = t
                         obtained_B22 = True
                 else:
-                    changed_B22 = False
-                    if simplices_at_time(t)[q] > simplices_at_time(t_A_km1)[q]:
-                        # NOTE: Not necessary, can also just use boundary matrices to get it. But this makes it more clear.
-                        A_km1_new = torch.zeros((simplices_at_time(t)[q]-simplices_at_time(s)[q], simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1]), device = device)
-                        A_km1_new[:A_km1.shape[0], :A_km1.shape[1]] = A_km1
-                        A_km1 = A_km1_new
+                    # changed_B22 = False
+                    # if simplices_at_time(t)[q] > simplices_at_time(t_A_km1)[q]:
+                    #     # NOTE: Not necessary, can also just use boundary matrices to get it. But this makes it more clear.
+                    #     # A_km1_new = torch.zeros((simplices_at_time(t)[q]-simplices_at_time(s)[q], simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1]), device = device)
+                    #     # A_km1_new[:A_km1.shape[0], :A_km1.shape[1]] = A_km1
+                    #     # A_km1 = A_km1_new
 
-                        A_km1_pinv_new = torch.zeros((simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q]-simplices_at_time(s)[q]), device = device)
-                        A_km1_pinv_new[:A_km1_pinv.shape[0], :A_km1_pinv.shape[1]] = A_km1_pinv
-                        A_km1_pinv = A_km1_pinv_new
+                    #     A_km1 = F.pad(A_km1, (0, 0, 0, simplices_at_time(t)[q]-simplices_at_time(t_A_km1)[q]), "constant", 0)
+                        
 
-                        changed_B22 = True
+                    #     # A_km1_pinv_new = torch.zeros((simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q]-simplices_at_time(s)[q]), device = device)
+                    #     # A_km1_pinv_new[:A_km1_pinv.shape[0], :A_km1_pinv.shape[1]] = A_km1_pinv
+                    #     # A_km1_pinv = A_km1_pinv_new
+
+                    #     A_km1_pinv = F.pad(A_km1_pinv, (0, simplices_at_time(t)[q]-simplices_at_time(t_A_km1)[q], 0, 0), "constant", 0)
+
+                    #     changed_B22 = True
                     
                     if simplices_at_time(t)[q+1] > simplices_at_time(t_A_km1)[q+1]:
                         # Use the update rule from Greville.
-                        
 
+                        if simplices_at_time(t)[q] > simplices_at_time(t_A_km1)[q]:
+                            A_km1 = F.pad(A_km1, (0, 0, 0, simplices_at_time(t)[q]-simplices_at_time(t_A_km1)[q]), "constant", 0)
+                            A_km1_pinv = F.pad(A_km1_pinv, (0, simplices_at_time(t)[q]-simplices_at_time(t_A_km1)[q], 0, 0), "constant", 0)
+                        
+                        stime2 = time.time()
                         for col in range(simplices_at_time(t_A_km1)[q+1], simplices_at_time(t)[q+1]):
                             a_k = boundary_matrices[q+1][simplices_at_time(s)[q]:simplices_at_time(t)[q], [col]]
 
                             d_k = A_km1_pinv@a_k
                             c_k = a_k - A_km1@d_k
-
-                            if torch.linalg.norm(c_k) > 1e-8:
+                            
+                            c_k_norm = torch.linalg.norm(c_k)
+                            if c_k_norm > 1e-8:
                                 b_k = torch.linalg.pinv(c_k)
+                                # b_k = c_k.T/c_k_norm
                             else:
                                 b_k = (1 + d_k.T@d_k)**(-1)*d_k.T@A_km1_pinv
                                 # print("c_k=0 norm c_k:", torch.linalg.norm(c_k))
                             
-                            A_km1_pinv = torch.vstack((A_km1_pinv-d_k@b_k, b_k))
+                            pinv_top_part = A_km1_pinv-d_k@b_k
+
+                            # This instead of the full matrix multiplication
+                            # cur_B22 -= d_k@b_k@A_km1
+                            # cur_B22 = torch.block_diag(cur_B22, b_k@a_k)
+
+                            # added_row = b_k@A_km1
+                            # cur_B22[[-1], :-1] = added_row
+                            # cur_B22[:-1, [-1]] = added_row.T
+                            # -------------------------------------------------
+
+                            A_km1_pinv = torch.vstack((pinv_top_part, b_k))
                             A_km1 = torch.hstack((A_km1, a_k))
-                        changed_B22 = True
-                        
-                    
-                    if changed_B22:
+
+
+                        greville_total_time += time.time() - stime2
+
                         t_A_km1 = t
                         cur_B22 = A_km1_pinv@A_km1
-                    # Else stays the same
-                
+                    
+                    # Else matrix stays the same, however A_km1 can still differ. Don't think we need to update howerer as the updated A_km1 is only used when n_q+1^t>N_q+1^t_A_km1.
+                pinv_total_time += time.time() - stime
+                stime = time.time()
+
+
                 # Calculate Laplacian and eigenvalues
                 if s_i != t_i and t_i > 0:
                     tm1 = relevant_times[t_i-1]
-                    if s_i > 0:
-                        sm1 = relevant_times[s_i-1]
 
-                        A_matrix = boundary_matrices[q+1][:simplices_at_time(s)[q], simplices_at_time(sm1)[q+1]:simplices_at_time(t)[q+1]]
+                    # Otherwsie, we now that there are only 0 eigenvalues
+                    if simplices_at_time(t)[q+1] > simplices_at_time(tm1)[q+1]:
+                        if s_i > 0:
+                            sm1 = relevant_times[s_i-1]
 
-                        eye = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], device = device)
-                        B22_sm1t = projection_matrices["sm1"][t_i]
+                            # Otherwsie, we now that there are only 0 eigenvalues
+                            if simplices_at_time(s)[q] > simplices_at_time(sm1)[q]:
+                                A_matrix = boundary_matrices[q+1][:simplices_at_time(s)[q], simplices_at_time(sm1)[q+1]:simplices_at_time(t)[q+1]]
 
-                        B22_st = torch.zeros_like(eye, device = device)
-                        B22_st[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = cur_B22
+                                eye = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], device = device)
+                                B22_sm1t = projection_matrices["sm1"][t_i]
 
-                        B22_stm1 = torch.zeros_like(eye, device = device)
-                        B22_stm1_partial = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], device = device)
-                        B22_stm1_partial[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = projection_matrices["s"][t_i-1]
-                        B22_stm1[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = B22_stm1_partial
+                                B22_st = torch.zeros_like(eye, device = device)
+                                B22_st[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = cur_B22
 
-                        B22_sm1tm1 = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], device = device)
-                        B22_sm1tm1[:(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1])] = projection_matrices["sm1"][t_i-1]
+                                B22_stm1 = torch.zeros_like(eye, device = device)
+                                B22_stm1_partial = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], device = device)
+                                B22_stm1_partial[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = projection_matrices["s"][t_i-1]
+                                B22_stm1[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = B22_stm1_partial
 
-                        cross_Lap = A_matrix@Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)@A_matrix.T
-                        # cross_Lap = Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)
+                                B22_sm1tm1 = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], device = device)
+                                B22_sm1tm1[:(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1])] = projection_matrices["sm1"][t_i-1]
 
-                        eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
-                    
+                                cross_Lap = A_matrix@Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)@A_matrix.T
+
+                                lap_total_time += time.time() - stime
+                                stime = time.time()
+                                # cross_Lap = Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)
+
+                                eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
+                                eig_total_time += time.time() - stime
+
+                            else:
+                                lap_total_time += time.time() - stime
+                                stime = time.time()
+
+                                # eigenvalues[q][s][t] = np.array([0])
+                                eig_total_time += time.time() - stime
+                        
+                        else:
+                            B12_st = boundary_matrices[q+1][:simplices_at_time(s)[q], simplices_at_time(s)[q+1]:simplices_at_time(t)[q+1]]
+
+                            eye = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], device = device)
+
+                            B22_st = cur_B22
+
+                            B22_stm1 = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], device = device)
+                            B22_stm1[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = projection_matrices["sm1"][t_i-1]
+
+                            cross_Lap = B12_st@(B22_stm1 - B22_st)@B12_st.T
+
+                            lap_total_time += time.time() - stime
+                            stime = time.time()
+
+                            eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
+                            eig_total_time += time.time() - stime
                     else:
-                        B12_st = boundary_matrices[q+1][:simplices_at_time(s)[q], simplices_at_time(s)[q+1]:simplices_at_time(t)[q+1]]
+                        lap_total_time += time.time() - stime
+                        stime = time.time()
+                        
+                        # eigenvalues[q][s][t] = np.array([0])
 
-                        eye = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], device = device)
-
-                        B22_st = cur_B22
-
-                        B22_stm1 = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], device = device)
-                        B22_stm1[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = projection_matrices["sm1"][t_i-1]
-
-                        cross_Lap = B12_st@(B22_stm1 - B22_st)@B12_st.T
-
-                        eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
+                        eig_total_time += time.time() - stime
                     
-
+                stime = time.time()
                 # Saving and removing the right matrices
                 if s_i > 0:
                     projection_matrices["s"][t_i] = cur_B22
@@ -382,14 +451,16 @@ def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda
                 if t_i == len(relevant_times)-1:
                     projection_matrices["sm1"][t_i] = cur_B22
 
+                save_total_time += time.time() - stime
+
     return eigenvalues, relevant_times
 
 
 
-def cross_Laplaican_eigenvalues_fast(f: d.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, device = "cuda", use_greville = False):
+def cross_Laplaican_eigenvalues_fast(f: dio.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, device = "cuda", use_greville = False):
     f.sort()
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, device=device)
-    eigenvalues = {q: {s: {t: torch.tensor([], dtype=torch.float64) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
     projection_matrices = {q: {s: {t: torch.tensor([], dtype=torch.float64) for t in range(len(relevant_times))} for s in  range(len(relevant_times))} for q in range(max_dim+1)}
 
     if Laplacian_fun is None:
@@ -581,12 +652,13 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
 
     # For pcolormesh, we need a grid that is one bigger as every rectangle needs starting and ending points.
     # Now added a point the same distance away as the last two real points.
+    relevant_times = relevant_times.tolist()
     extended_relevant_times = relevant_times+[2*relevant_times[-1]-relevant_times[-2]]
     x, y = np.meshgrid(extended_relevant_times, extended_relevant_times)
 
     if filtration is not None:
-        p = d.cohomology_persistence(filtration, 47, True)
-        dgms = d.init_diagrams(p, filtration)
+        p = dio.cohomology_persistence(filtration, 47, True)
+        dgms = dio.init_diagrams(p, filtration)
         barcodes_births, barcodes_deaths = [], []
         for q in range(len(dgms)):
             barcodes_births.append([])
@@ -624,18 +696,100 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
     return fig, ax
 
 
+def plot_trace_diagram(f, eigenvalues, show=False, max_dim=2,
+                 line_style=None, pt_style_normal=None,
+                 limits = None):
+    """
+    Plot the persistence diagram.
+
+    Arguments:
+        dgm (Diagram): See for example `init_diagrams`.
+
+    Keyword Arguments:
+        show (bool): Display the plot. (Default: False)
+        labels (bool): Set axis labels. (Default: False)
+        ax (AxesSubplot): Axes that should be used for plotting (Default: None)
+        pt_style (dict): argments passed to `ax.scatter` for style of points.
+        line_style (dict): argments passed to `ax.plot` for style of diagonal line.
+    """
+
+    p = dio.cohomology_persistence(f, 47, True)
+    dgms = dio.init_diagrams(p, f)
+    if show:
+        fig, ax = plt.subplots(1, max_dim+1, figsize=(5*(max_dim+1),5))
+
+    s_lists = []
+    t_lists = []
+    cmaps = []
+
+    for q, dgm in enumerate(dgms):
+        if q > max_dim:
+            break
+
+        line_kwargs = {}
+        pt_kwargs = {"c": "black", "marker": "x", "alpha": 0.5, "s": 100}
+        if pt_style_normal is not None:
+            pt_kwargs.update(pt_style_normal)
+        if line_style is not None:
+            line_kwargs.update(line_style)
 
 
+        inf = float('inf')
+        min_birth,max_birth,min_death,max_death = inf,-1,inf,-1
+        if not limits:
+            min_birth = min(min_birth, min((p.birth for p in dgm if p.birth != inf))-1)
+            max_birth = max(max_birth, max((p.birth for p in dgm if p.birth != inf))+1)
+            min_death = min(min_death, min((p.death for p in dgm if p.death != inf))-1)
+            max_death = max(max_death, max((p.death for p in dgm if p.death != inf))+1)
+        else:
+            min_birth, max_birth, min_death, max_death = limits
 
 
+        if show:
+            ax[q].set_aspect('equal', 'datalim')
+
+            min_diag = min(min_birth, min_death)
+            max_diag = max(max_birth, max_death)
+            ax[q].scatter([p.birth for p in dgm], [p.death if p.death != inf else max_death for p in dgm], **pt_kwargs)
+            ax[q].plot([min_diag, max_diag], [min_diag, max_diag], **line_kwargs)
+
+        s_list = []
+        t_list = []
+        cmap = []
+        for s in eigenvalues[q].keys():
+            for t in eigenvalues[q][s].keys():
+                if np.sum(eigenvalues[q][s][t]) > 1e-10:
+                    s_list.append(s)
+                    t_list.append(t)
+                    cmap.append(np.sum(eigenvalues[q][s][t]))
+
+        s_lists.append(s_list)
+        t_lists.append(t_list)
+        cmaps.append(cmap)
+
+        if show:
+            ax[q].scatter(s_list, t_list, c=cmap)
+
+            ax[q].set_xlabel('birth')
+            ax[q].set_ylabel('death')
+            ax[q].set_title(f"Persistence diagram (dim {q})")
+
+        ## clip the view
+        #plt.axes().set_xlim([min_birth, max_birth])
+        #plt.axes().set_ylim([min_death, max_death])
+
+    if show:
+        fig.show()
+    return s_lists, t_lists, cmaps
 
 
-
-def plot_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plot_types = "all", method = "slow", Laplacian_fun = None, integer_time_steps = False, device = "cuda",
+def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, plot_types = "all", method = "slow", Laplacian_fun = None, integer_time_steps = False, device = "cuda",
                      plot_args_mesh = {}, 
                      plot_args_diag = {},
                      plot_args_line = {},
-                     plot_type_to_fun = {}):
+                     plot_type_to_fun = {},
+                     plot_diagram = False,
+                     show_plot = True):
     """
     lapalcian_type: "persistent" for normal laplacian, or "cross" for cross laplacian, "cross_cor10" for cross Laplacian in two directions.
     """
@@ -649,7 +803,17 @@ def plot_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plo
         else:
             eigenvalues, relevant_times = cross_Laplaican_eigenvalues_fast(f, weight_fun=weight_fun, max_dim=max_dim, Laplacian_fun = Laplacian_fun, device=device)
 
-    fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_types=plot_types, filtration=f, integer_time_steps=integer_time_steps,
-                               plot_args_mesh = plot_args_mesh, plot_args_diag=plot_args_diag,
-                               plot_args_line=plot_args_line, plot_type_to_fun=plot_type_to_fun)
-    return eigenvalues, relevant_times, fig, ax
+    if plot_diagram:
+        s_lists, t_lists, cmaps = plot_trace_diagram(f, eigenvalues, show=show_plot, max_dim=max_dim,
+                     line_style=plot_args_line, pt_style_normal=plot_args_diag,
+                     limits = (relevant_times[0], relevant_times[-1]*1.2, relevant_times[0], relevant_times[-1]*1.2))
+        return eigenvalues, relevant_times, s_lists, t_lists, cmaps
+    
+    else:
+        if show_plot:
+            fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_types=plot_types, filtration=f, integer_time_steps=integer_time_steps,
+                                plot_args_mesh = plot_args_mesh, plot_args_diag=plot_args_diag,
+                                plot_args_line=plot_args_line, plot_type_to_fun=plot_type_to_fun)
+            return eigenvalues, relevant_times, fig, ax
+        else:
+            return eigenvalues, relevant_times

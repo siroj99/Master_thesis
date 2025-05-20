@@ -3,7 +3,7 @@ from re import A, I
 from matplotlib.pylab import LinAlgError
 import numpy as np
 from copy import deepcopy
-import dionysus as d
+import dionysus as dio
 import scipy
 import scipy.linalg
 import scipy.stats as ss
@@ -502,7 +502,7 @@ def cross_Laplacian_extended(q, boundary_matrices, s_i, t_i, simplices_at_time, 
 
 
 
-def cross_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, method = "cor10", Laplacian_fun = None):
+def cross_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, method = "cor10", Laplacian_fun = None):
     f.sort()
 
     if method == "cor10":
@@ -547,7 +547,7 @@ def cross_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, me
                     print(f"q: {q}, s: {s}, t: {t}, evals: {eigenvalues[q][s][t]}, Lap:\n{Lap}")
     return eigenvalues, relevant_times
     
-def cross_Laplaican_eigenvalues_fast(f: d.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, use_greville = False):
+def cross_Laplaican_eigenvalues_fast(f: dio.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, use_greville = False):
     f.sort()
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
     eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
@@ -695,28 +695,28 @@ def cross_Laplaican_eigenvalues_fast(f: d.Filtration, weight_fun = lambda x: 1, 
 
 
 
-def calc_cor10(f: d.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False):
+def calc_cor10(f: dio.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False):
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
     relevant_times = np.array(relevant_times)
     t_i = np.argmin(np.abs(relevant_times - t))
     s_i = np.argmin(np.abs(relevant_times - s))
     return cross_Laplacian_cor10(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=verb)
 
-def calc_cross_extended(f: d.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False, Laplacian_fun = None):
+def calc_cross_extended(f: dio.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False, Laplacian_fun = None):
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
     relevant_times = np.array(relevant_times)
     t_i = np.argmin(np.abs(relevant_times - t))
     s_i = np.argmin(np.abs(relevant_times - s))
     return cross_Laplacian_extended(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=verb, Laplacian_fun= Laplacian_fun)
 
-def calc_vertical_extended(f: d.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False):
+def calc_vertical_extended(f: dio.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False):
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
     relevant_times = np.array(relevant_times)
     t_i = np.argmin(np.abs(relevant_times - t))
     s_i = np.argmin(np.abs(relevant_times - s))
     return vertical_Laplacian_extended(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=verb)
 
-def plot_Laplacian_new_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plot_types = "all", method = "cor10", Laplacian_fun = None, integer_time_steps = False,
+def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, plot_types = "all", method = "cor10", Laplacian_fun = None, integer_time_steps = False,
                      plot_args_mesh = {}, 
                      plot_args_diag = {},
                      plot_args_line = {},

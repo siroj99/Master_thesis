@@ -1,6 +1,6 @@
 import networkx as nx
 import itertools
-import dionysus as d
+import dionysus as dio
 import numpy as np
 
 
@@ -93,7 +93,7 @@ def draw_2d_simplicial_complex(simplices, pos=None, return_pos=False, ax = None)
     if return_pos: return pos
 
 
-def draw_filtration(f: d.Filtration):
+def draw_filtration(f: dio.Filtration):
     f.sort()
     # boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, lambda x: 1)
     

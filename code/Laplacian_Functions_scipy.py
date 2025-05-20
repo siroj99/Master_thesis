@@ -1,7 +1,7 @@
 from matplotlib.pylab import LinAlgError
 import numpy as np
 from copy import deepcopy
-import dionysus as d
+import dionysus as dio
 import scipy
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
@@ -10,20 +10,49 @@ import pandas as pd
 from sympy import use
 from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
+import time
 import gudhi as gd
 
-def pinv(A, sparse_type = "csr"):
-    if sparse_type == "csr":
-        return sp.csr_matrix(np.round(np.linalg.pinv(A.toarray()), 15))
-    elif sparse_type == "csc":
-        return sp.csc_matrix(np.round(np.linalg.pinv(A.toarray()), 15))
-    elif sparse_type == "lil":
-        return sp.lil_matrix(np.round(np.linalg.pinv(A.toarray()), 15))
+def pinv(A):
+    if A.format == "csr":
+        return sp.csr_array(np.round(np.linalg.pinv(A.toarray()), 15))
+    elif A.format == "csc":
+        return sp.csc_array(np.round(np.linalg.pinv(A.toarray()), 15))
+    elif A.format == "lil":
+        return sp.lil_array(np.round(np.linalg.pinv(A.toarray()), 15))
     else:
-        print(f"Sparse type {sparse_type} has not been implemented yet. Please use csr, csc or lil.")
+        print(f"Sparse type {A.format} has not been implemented yet. Please use csr, csc or lil.")
         return None
+    
+def add_identity(ori, id_size):
+    ori_shape = ori.shape[0]
+    ori._shape = (ori_shape+id_size, ori_shape+id_size)
+    ori.indptr = np.append(ori.indptr, ori.indptr[-1]+np.arange(1, id_size+1))
+    ori.indices = np.append(ori.indices, ori_shape+np.arange(id_size))
+    ori.data = np.append(ori.data, np.ones(id_size))
 
-def compute_boundary_matrices(f: d.Filtration, weight_fun, sparse_type = "csr"):
+def extend_with_zeros(ori, new_shape: tuple[int, int], ori_matrix_in_bottom_right = True):
+    """
+    ori_matrix_in_bottom_right: if True, the original matrix is in the bottom right corner of the new matrix. If False, the original matrix is in the top left corner of the new matrix.
+    """
+    ori_shape = ori.shape
+    ori._shape = new_shape
+    if ori.format == "csr":
+        if ori_matrix_in_bottom_right:
+            ori.indices += new_shape[1] - ori_shape[1]
+            ori.indptr = np.hstack((np.zeros(new_shape[0] - ori_shape[0], dtype=np.int32), ori.indptr))
+        else:
+            ori.indptr = np.hstack((ori.indptr, ori.indptr[-1]+np.zeros(new_shape[0] - ori_shape[0], dtype=np.int32)))
+            
+    elif ori.format == "csc":
+        if ori_matrix_in_bottom_right:
+            ori.indices += new_shape[0] - ori_shape[0]
+            ori.indptr = np.hstack((np.zeros(new_shape[1] - ori_shape[1], dtype=np.int32), ori.indptr))
+        else:
+            ori.indptr = np.hstack((ori.indptr, ori.indptr[-1]+np.zeros(new_shape[1] - ori_shape[1], dtype=np.int32)))
+    
+
+def compute_boundary_matrices(f: dio.Filtration, weight_fun, sparse_type = "csr"):
     t_old = 0
     relevant_times = []
     n_simplicies_seen_per_time = []
@@ -62,14 +91,7 @@ def compute_boundary_matrices(f: d.Filtration, weight_fun, sparse_type = "csr"):
     simplices_at_end = simplices_at_time(np.inf)
 
     # boundary_matrices = [0] + [torch.zeros((simplices_at_end[q-1], simplices_at_end[q])) for q in range(1, maxq)]
-    if sparse_type == "csr":
-        boundary_matrices = [sp.csr_matrix((simplices_at_end[max(0,q-1)], simplices_at_end[q])) for q in range(maxq)]
-    elif sparse_type == "csc":
-        boundary_matrices = [sp.csc_matrix((simplices_at_end[max(0,q-1)], simplices_at_end[q])) for q in range(maxq)]
-    elif sparse_type == "lil":
-        boundary_matrices = [sp.lil_matrix((simplices_at_end[max(0,q-1)], simplices_at_end[q])) for q in range(maxq)]
-    else:
-        print(f"Sparse type {sparse_type} has not been implemented yet. Please use csr, csc or lil.")
+    boundary_matrices = [sp.lil_array((simplices_at_end[max(0,q-1)], simplices_at_end[q])) for q in range(maxq)]
     name_to_idx = [{} for _ in range(maxq)]
     simplex_bar = tqdm(range(len(f)), leave=False, desc=f"Computing boundary matrices")
     for s in f:
@@ -96,16 +118,17 @@ def compute_boundary_matrices(f: d.Filtration, weight_fun, sparse_type = "csr"):
                 # boundary_matrices[q][idx_bdry_simplex, idx] = weight_fun(name_bdry_simplex)*(-1)**i
 
     print("Computing boundary matrices done.")
+    boundary_matrices = [matrix.asformat(sparse_type) for matrix in boundary_matrices]
 
     return boundary_matrices, name_to_idx, simplices_at_time, relevant_times
 
 def cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=False, Laplacian_fun = None, sparse_type = "csr"):
     if sparse_type == "csr":
-        zero_matrix = sp.csr_matrix
+        zero_array = sp.csr_array
     elif sparse_type == "csc":
-        zero_matrix = sp.csc_matrix
+        zero_array = sp.csc_array
     elif sparse_type == "lil":
-        zero_matrix = sp.lil_matrix
+        zero_array = sp.lil_array
     else:
         print(f"Sparse type {sparse_type} has not been implemented yet. Please use csr, csc or lil.")
 
@@ -140,21 +163,21 @@ def cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_
             print(f"B22_sm1tm1:\n{B22_sm1tm1}")
     
     if s_i > 0:
-        eye_sm1t = sp.eye(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], format = sparse_type)
+        eye_sm1t = sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], format = sparse_type)
         B22_sm1t_full = pinv(B22_sm1t)@B22_sm1t
 
-        B22_st_full = zero_matrix(eye_sm1t.shape)
+        B22_st_full = zero_array(eye_sm1t.shape)
         B22_st_full[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = pinv(B22_st)@B22_st
 
-        # B22_st_full = zero_matrix(eye_sm1t.shape)
+        # B22_st_full = zero_array(eye_sm1t.shape)
         # B22_st_full[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = B22_st@B22_st
 
-        B22_stm1_full = zero_matrix(eye_sm1t.shape)
-        B22_stm1_partial_full = sp.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], format = sparse_type)
+        B22_stm1_full = zero_array(eye_sm1t.shape)
+        B22_stm1_partial_full = sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], format = sparse_type)
         B22_stm1_partial_full[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = pinv(B22_stm1)@B22_stm1
         B22_stm1_full[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = B22_stm1_partial_full
 
-        B22_sm1tm1_full = sp.eye(eye_sm1t.shape[0], format = sparse_type)
+        B22_sm1tm1_full = sp.eye_array(eye_sm1t.shape[0], format = sparse_type)
         B22_sm1tm1_full[:(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1])] = pinv(B22_sm1tm1)@B22_sm1tm1
 
         if verb:
@@ -233,25 +256,35 @@ def cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_
             return A_matrix@Laplacian_fun(B22_st_full, B22_stm1_full, B22_sm1t_full, B22_sm1tm1_full, eye_sm1t)@A_matrix.T
         return A_matrix@(B22_sm1t_full@B22_stm1_full@(eye_sm1t-B22_st_full)@B22_stm1_full)@A_matrix.T
 
-    eye_st = sp.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], format= sparse_type)
+    eye_st = sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], format= sparse_type)
 
     B22_st_full = pinv(B22_st)@B22_st
 
-    B22_stm1_full = sp.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], format= sparse_type)
+    B22_stm1_full = sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], format= sparse_type)
     B22_stm1_full[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = pinv(B22_stm1)@B22_stm1
 
     return B12_st@(eye_st-B22_st_full)@B22_stm1_full@B12_st.T
 
-def calc_cross(f: d.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False, Laplacian_fun = None, sparse_type = "csr"):
+def calc_cross(f: dio.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False, Laplacian_fun = None, sparse_type = "csr"):
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, sparse_type=sparse_type)
+    print("Boundary type:", boundary_matrices[0].format)
     relevant_times = np.array(relevant_times)
     t_i = np.argmin(np.abs(relevant_times - t))
     s_i = np.argmin(np.abs(relevant_times - s))
     return cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=verb, Laplacian_fun= Laplacian_fun, sparse_type=sparse_type)
 
-def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, device = "cuda"):
+def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, sparse_type = "csr"):
+    if sparse_type == "csr":
+        zero_array = sp.csr_array
+    elif sparse_type == "csc":
+        zero_array = sp.csc_array
+    elif sparse_type == "lil":
+        zero_array = sp.lil_array
+    else:
+        print(f"Sparse type {sparse_type} has not been implemented yet. Please use csr, csc or lil.")
+
     f.sort()
-    boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, device=device)
+    boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, sparse_type=sparse_type)
     eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
     # projection_matrices = {q: {s: {t: torch.tensor([], dtype=torch.float64) for t in range(len(relevant_times))} for s in  range(len(relevant_times))} for q in range(max_dim+1)}
     
@@ -261,6 +294,13 @@ def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda
     for q in range(max_dim+1):
         projection_matrices = {"sm1": {t: None for t in range(len(relevant_times))}, "s": {t: None for t in range(len(relevant_times))}}
         s_i_bar = tqdm(range(len(relevant_times)-1), leave=False)
+        pinv_total_time = 0
+        pinv_total_time_2 = 0
+        lap_total_time = 0
+        lap_total_time_1 = 0
+        lap_total_time_2 = 0
+        eig_total_time = 0
+
         for s_i in s_i_bar:
             s = relevant_times[s_i]
 
@@ -268,40 +308,49 @@ def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda
             # NOTE: if n_q+1^K==n_q+1^L, then the persistent up-laplacian is just the combinatorial up-laplacian in K. Therefore, we can let B22 be the identity.
             obtained_B22 = False
             for t_i in range(s_i, len(relevant_times)):
-                s_i_bar.set_description(f"t_i: {t_i}/{len(relevant_times)}")
+                s_i_bar.set_description(f"t_i: {t_i}/{len(relevant_times)}, pinv: {pinv_total_time:.2f}, pinv2: {pinv_total_time_2:.2f}, lap: {lap_total_time:.2f}, lap1: {lap_total_time_1:.2f}, lap2: {lap_total_time_2:.2f}, eig: {eig_total_time:.2f}")
                 t = relevant_times[t_i]
                 # tm1 = relevant_times[t_i-1]
 
                 # Get B22^(-1)@B22
+                stime = time.time()
                 if not obtained_B22:
                     if simplices_at_time(t)[q+1] == simplices_at_time(s)[q+1]:
-                        cur_B22 = torch.zeros((0,0), device = device)
+                        cur_B22 = zero_array((0,0))
                     elif simplices_at_time(t)[q] == simplices_at_time(s)[q]:
-                        cur_B22 = torch.zeros((simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1]), device = device)
+                        cur_B22 = zero_array((simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1]))
 
                         # Think this is okay
                         # eigenvalues[q][s][t] = np.array([0])
                         # continue
                     else:
                         A_km1 = boundary_matrices[q+1][simplices_at_time(s)[q]:simplices_at_time(t)[q], simplices_at_time(s)[q+1]:simplices_at_time(t)[q+1]]
-                        A_km1_pinv = torch.linalg.pinv(A_km1)
+                        A_km1_pinv = pinv(A_km1)
                         cur_B22 = A_km1_pinv@A_km1
                         t_A_km1 = t
                         obtained_B22 = True
+                    
                 else:
                     changed_B22 = False
                     if simplices_at_time(t)[q] > simplices_at_time(t_A_km1)[q]:
                         # NOTE: Not necessary, can also just use boundary matrices to get it. But this makes it more clear.
-                        A_km1_new = torch.zeros((simplices_at_time(t)[q]-simplices_at_time(s)[q], simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1]), device = device)
-                        A_km1_new[:A_km1.shape[0], :A_km1.shape[1]] = A_km1
-                        A_km1 = A_km1_new
+                        # A_km1_new = zero_array((simplices_at_time(t)[q]-simplices_at_time(s)[q], simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1]))
+                        # A_km1_new[:A_km1.shape[0], :A_km1.shape[1]] = A_km1
+                        # A_km1 = A_km1_new
+                        extend_with_zeros(A_km1, new_shape=(simplices_at_time(t)[q]-simplices_at_time(s)[q], simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1]), 
+                                          ori_matrix_in_bottom_right = False)
 
-                        A_km1_pinv_new = torch.zeros((simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q]-simplices_at_time(s)[q]), device = device)
-                        A_km1_pinv_new[:A_km1_pinv.shape[0], :A_km1_pinv.shape[1]] = A_km1_pinv
-                        A_km1_pinv = A_km1_pinv_new
+
+                        # A_km1_pinv_new = zero_array((simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q]-simplices_at_time(s)[q]))
+                        # A_km1_pinv_new[:A_km1_pinv.shape[0], :A_km1_pinv.shape[1]] = A_km1_pinv
+                        # A_km1_pinv = A_km1_pinv_new
+                        extend_with_zeros(A_km1_pinv, new_shape=(simplices_at_time(t_A_km1)[q+1]-simplices_at_time(s)[q+1], simplices_at_time(t)[q]-simplices_at_time(s)[q]), 
+                                          ori_matrix_in_bottom_right = False)
 
                         changed_B22 = True
                     
+                    pinv_total_time += time.time() - stime
+                    stime = time.time()
                     if simplices_at_time(t)[q+1] > simplices_at_time(t_A_km1)[q+1]:
                         # Use the update rule from Greville.
                         
@@ -312,14 +361,14 @@ def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda
                             d_k = A_km1_pinv@a_k
                             c_k = a_k - A_km1@d_k
 
-                            if torch.linalg.norm(c_k) > 1e-8:
-                                b_k = torch.linalg.pinv(c_k)
+                            if spla.norm(c_k) > 1e-8:
+                                b_k = pinv(c_k)
                             else:
-                                b_k = (1 + d_k.T@d_k)**(-1)*d_k.T@A_km1_pinv
+                                b_k = (1 + (d_k.T@d_k)[0, 0])**(-1)*d_k.T@A_km1_pinv
                                 # print("c_k=0 norm c_k:", torch.linalg.norm(c_k))
                             
-                            A_km1_pinv = torch.vstack((A_km1_pinv-d_k@b_k, b_k))
-                            A_km1 = torch.hstack((A_km1, a_k))
+                            A_km1_pinv = sp.vstack((A_km1_pinv-d_k@b_k, b_k))
+                            A_km1 = sp.hstack((A_km1, a_k))
                         changed_B22 = True
                         
                     
@@ -327,47 +376,119 @@ def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda
                         t_A_km1 = t
                         cur_B22 = A_km1_pinv@A_km1
                     # Else stays the same
+
+                    pinv_total_time_2 += time.time() - stime
+                    stime = time.time()
+                
+                
                 
                 # Calculate Laplacian and eigenvalues
                 if s_i != t_i and t_i > 0:
                     tm1 = relevant_times[t_i-1]
-                    if s_i > 0:
+                    if s_i > 0:                        
                         sm1 = relevant_times[s_i-1]
 
                         A_matrix = boundary_matrices[q+1][:simplices_at_time(s)[q], simplices_at_time(sm1)[q+1]:simplices_at_time(t)[q+1]]
+                        
 
-                        eye = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], device = device)
+                        eye = sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], format = sparse_type)
                         B22_sm1t = projection_matrices["sm1"][t_i]
+                        
 
-                        B22_st = torch.zeros_like(eye, device = device)
-                        B22_st[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = cur_B22
+                        B22_st = deepcopy(cur_B22)
+                        extend_with_zeros(B22_st, new_shape=eye.shape, ori_matrix_in_bottom_right = True)
 
-                        B22_stm1 = torch.zeros_like(eye, device = device)
-                        B22_stm1_partial = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], device = device)
-                        B22_stm1_partial[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = projection_matrices["s"][t_i-1]
-                        B22_stm1[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = B22_stm1_partial
+                        # B22_st[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = cur_B22
+                        lap_total_time += time.time() - stime
+                        stime = time.time()
 
-                        B22_sm1tm1 = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], device = device)
-                        B22_sm1tm1[:(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1])] = projection_matrices["sm1"][t_i-1]
+                        # B22_stm1 = deepcopy(projection_matrices["s"][t_i-1])
+                        # Adding the identity matrix to the end of the B22_stm1 matrix
+                        # B22_stm1.indptr = np.hstack((B22_stm1.indptr, np.array([B22_stm1.indptr[-1]]*(cur_B22.shape[0]-B22_stm1.shape[0]))))
+                        # B22_stm1._shape = cur_B22.shape
+                        # for i in range(projection_matrices["s"][t_i-1].shape[0], cur_B22.shape[0]):
+                        #     B22_stm1[i,i] = 1
+                        B22_stm1 = deepcopy(projection_matrices["s"][t_i-1])
+                        add_identity(B22_stm1, simplices_at_time(t)[q+1]-simplices_at_time(tm1)[q+1])
+                        extend_with_zeros(B22_stm1, new_shape=eye.shape, ori_matrix_in_bottom_right = True)
+                        # B22_stm1._shape = eye.shape
+                        # B22_stm1.indices += simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]
+                        # B22_stm1.indptr = np.hstack((np.array([0]*(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1])), B22_stm1.indptr))
+                        
 
+                        
+                        # B22_stm1 = zero_array(eye.shape)
+                        # B22_stm1_partial = sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], format= sparse_type)
+                        # B22_stm1_partial[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = projection_matrices["s"][t_i-1]
+                        # B22_stm1[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = B22_stm1_partial
+
+                        # B22_sm1tm1 = deepcopy(projection_matrices["sm1"][t_i-1])
+                        
+                        # Adding the identity matrix to the end of the B22_sm1tm1 matrix
+                        # B22_sm1tm1.indptr = np.hstack((B22_sm1tm1.indptr, np.array([B22_sm1tm1.indptr[-1]]*(eye.shape[0]-B22_sm1tm1.shape[0]))))
+                        # B22_sm1tm1._shape = eye.shape
+                        # for i in range(projection_matrices["sm1"][t_i-1].shape[0], eye.shape[0]):
+                        #     B22_sm1tm1[i,i] = 1
+
+                        B22_sm1tm1 = deepcopy(projection_matrices["sm1"][t_i-1])
+                        add_identity(B22_sm1tm1, simplices_at_time(t)[q+1]-simplices_at_time(tm1)[q+1])
+                        # B22_sm1tm1 = sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(sm1)[q+1], format= sparse_type)
+                        # B22_sm1tm1[:(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(sm1)[q+1])] = projection_matrices["sm1"][t_i-1]
+
+                        lap_total_time_1 += time.time() - stime
+                        stime = time.time()
                         cross_Lap = A_matrix@Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)@A_matrix.T
-                        # cross_Lap = Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)
+                        # # cross_Lap = Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)
+                        
+                        lap_total_time_2 += time.time() - stime
+                        stime = time.time()
+                        # # TODO: Make this sparse
+                        # eigenvalues[q][s][t] = np.linalg.eigvals(cross_Lap.toarray()).real
+                        if simplices_at_time(t)[q+1]-simplices_at_time(tm1)[q+1] > 0:
+                            if cross_Lap.shape[0] > 2:
+                                eigenvalues[q][s][t] = spla.eigs(cross_Lap, k=min(cross_Lap.shape[0]-2, simplices_at_time(t)[q+1]-simplices_at_time(tm1)[q+1]), return_eigenvectors=False).real
+                            else:
+                                eigenvalues[q][s][t] = np.linalg.eigvals(cross_Lap.toarray()).real
 
-                        eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
-                    
+                        eig_total_time += time.time() - stime
+                        stime = time.time()
                     else:
                         B12_st = boundary_matrices[q+1][:simplices_at_time(s)[q], simplices_at_time(s)[q+1]:simplices_at_time(t)[q+1]]
 
-                        eye = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], device = device)
+                        eye = sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], format = sparse_type)
+                        lap_total_time += time.time() - stime
+                        stime = time.time()
 
                         B22_st = cur_B22
+                        
+                        B22_stm1 = deepcopy(projection_matrices["sm1"][t_i-1])#sp.block_array([[projection_matrices["sm1"][t_i-1], None], [None, sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(tm1)[q+1], format = sparse_type)]], format = sparse_type)
+                        add_identity(B22_stm1, simplices_at_time(t)[q+1]-simplices_at_time(tm1)[q+1])
+                        # B22_stm1 = deepcopy(projection_matrices["sm1"][t_i-1])
+                        # # Adding the identity matrix to the end of the B22_stm1 matrix
+                        # B22_stm1.indptr = np.hstack((B22_stm1.indptr, np.array([B22_stm1.indptr[-1]]*(eye.shape[0]-B22_stm1.shape[0]))))
+                        # B22_stm1._shape = eye.shape
+                        # for i in range(projection_matrices["sm1"][t_i-1].shape[0], eye.shape[0]):
+                        #     B22_stm1[i,i] = 1
+                        # B22_stm1 = sp.eye_array(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], format = sparse_type)
+                        # B22_stm1[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = projection_matrices["sm1"][t_i-1]
 
-                        B22_stm1 = torch.eye(simplices_at_time(t)[q+1]-simplices_at_time(s)[q+1], device = device)
-                        B22_stm1[:(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1]), :(simplices_at_time(tm1)[q+1]-simplices_at_time(s)[q+1])] = projection_matrices["sm1"][t_i-1]
+                        lap_total_time_1 += time.time() - stime
+                        stime = time.time()
 
                         cross_Lap = B12_st@(B22_stm1 - B22_st)@B12_st.T
 
-                        eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
+                        lap_total_time_2 += time.time() - stime
+                        stime = time.time()
+
+                        # eigenvalues[q][s][t] = np.linalg.eigvals(cross_Lap.toarray()).real
+                        if simplices_at_time(t)[q+1]-simplices_at_time(tm1)[q+1] > 0:
+                            if cross_Lap.shape[0] > 2:
+                                eigenvalues[q][s][t] = spla.eigs(cross_Lap, k=min(cross_Lap.shape[0]-2, simplices_at_time(t)[q+1]-simplices_at_time(tm1)[q+1]), return_eigenvectors=False).real
+                            else:
+                                eigenvalues[q][s][t] = np.linalg.eigvals(cross_Lap.toarray()).real
+                        
+                        eig_total_time += time.time() - stime
+                        stime = time.time()
                     
 
                 # Saving and removing the right matrices
@@ -382,3 +503,108 @@ def cross_Laplaican_eigenvalues_less_memory(f: d.Filtration, weight_fun = lambda
                     projection_matrices["sm1"][t_i] = cur_B22
 
     return eigenvalues, relevant_times
+
+def eig_plot_helper(x, fun, eps = 1e-8):
+    if len(x) > 0:
+        pos_x = x[np.abs(x)>eps]
+        if len(pos_x) > 0:
+            return fun(pos_x)
+        else:
+            return 0
+    else:
+        return np.nan
+
+def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration = None, integer_time_steps = False,
+                     plot_args_mesh = {}, 
+                     plot_args_diag = {},
+                     plot_args_line = {},
+                     plot_type_to_fun = {}):
+    # NOTE: eigenvalues should be a numpy array, not a torch tensor.
+    # Can choose these plot types
+    plot_type_to_fun = {
+        "Min": np.min,
+        "Max": np.max,
+        "Sum": np.sum,
+        "Mean": np.mean,
+        "Prod": np.prod,
+        "Gmean": ss.gmean
+    } | plot_type_to_fun
+
+    plot_args_mesh = {"alpha": 1, "cmap": "jet"} | plot_args_mesh
+    plot_args_diag = {"c": "black", "marker": ".", "alpha": 0.75} | plot_args_diag
+    plot_args_line = {"c": "r", "alpha": 0.5} | plot_args_line
+
+    max_dim = max(eigenvalues.keys())
+
+    if plot_types == "all":
+        plot_types = list(plot_type_to_fun.keys())
+
+    fig, ax = plt.subplots(max_dim+1, len(plot_types))
+    fig.set_size_inches(4*len(plot_types), 4*(max_dim+1))
+    if len(plot_types) == 1:
+        cur_ax = lambda x,y: ax[x]
+    else:
+        cur_ax = lambda x,y: ax[x, y]
+        
+
+    fig.gca()
+
+    # For pcolormesh, we need a grid that is one bigger as every rectangle needs starting and ending points.
+    # Now added a point the same distance away as the last two real points.
+    extended_relevant_times = relevant_times+[2*relevant_times[-1]-relevant_times[-2]]
+    x, y = np.meshgrid(extended_relevant_times, extended_relevant_times)
+
+    if filtration is not None:
+        p = dio.cohomology_persistence(filtration, 47, True)
+        dgms = dio.init_diagrams(p, filtration)
+        barcodes_births, barcodes_deaths = [], []
+        for q in range(len(dgms)):
+            barcodes_births.append([])
+            barcodes_deaths.append([])
+            for p in dgms[q]:
+                barcodes_births[q].append(p.birth)
+                if p.death != np.inf:
+                    barcodes_deaths[q].append(p.death)
+                else:
+                    barcodes_deaths[q].append(extended_relevant_times[-1])
+
+    for q in range(max_dim+1):
+        df_evals = pd.DataFrame(eigenvalues[q])
+        for ax_i, plot_type in enumerate(plot_types):
+            if plot_type == "Prod":
+                plot_args_mesh["norm"] = "log"
+            else:
+                plot_args_mesh["norm"] = "linear"
+            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, plot_type_to_fun[plot_type]))).values, **plot_args_mesh)
+            plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
+            if q == 0:
+                cur_ax(q, ax_i).set_title(f"{plot_type} eigenvalue")
+            if filtration is not None:
+                cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], **plot_args_diag)
+
+            ax_n = cur_ax(q, ax_i).twinx()
+            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], plot_type_to_fun[plot_type]) for t in relevant_times for _ in (0,1)][:-1], **plot_args_line)
+            if plot_type == "Prod":
+                ax_n.set_yscale("log")
+
+            if integer_time_steps:
+                cur_ax(q, ax_i).yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        cur_ax(q, 0).set_ylabel(f"q={q}")
+    fig.tight_layout()
+    return fig, ax
+
+def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, plot_types = "all", method = "slow", Laplacian_fun = None, integer_time_steps = False, sparse_type = "csr",
+                     plot_args_mesh = {}, 
+                     plot_args_diag = {},
+                     plot_args_line = {},
+                     plot_type_to_fun = {}):
+    """
+    lapalcian_type: "persistent" for normal laplacian, or "cross" for cross laplacian, "cross_cor10" for cross Laplacian in two directions.
+    """
+    
+    eigenvalues, relevant_times = cross_Laplaican_eigenvalues_less_memory(f, weight_fun=weight_fun, max_dim=max_dim, Laplacian_fun = Laplacian_fun, sparse_type = sparse_type)
+
+    fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_types=plot_types, filtration=f, integer_time_steps=integer_time_steps,
+                               plot_args_mesh = plot_args_mesh, plot_args_diag=plot_args_diag,
+                               plot_args_line=plot_args_line, plot_type_to_fun=plot_type_to_fun)
+    return eigenvalues, relevant_times, fig, ax

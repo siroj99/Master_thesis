@@ -1,6 +1,6 @@
 import numpy as np
 from copy import deepcopy
-import dionysus as d
+import dionysus as dio
 import scipy
 import scipy.stats as ss
 import pandas as pd
@@ -72,7 +72,7 @@ def persistent_Laplacian(Bqplus1: np.array, Bq: np.array, verb = False) -> np.ar
         print()
     return upL + downL
 
-def compute_boundary_matrices(f: d.Filtration, weight_fun):
+def compute_boundary_matrices(f: dio.Filtration, weight_fun):
     t_old = 0
     relevant_times = []
     n_simplicies_seen_per_time = []
@@ -213,7 +213,7 @@ def persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_tim
 #         Bqplus1 = 0
 #     return persistent_Laplacian_new(Bqplus1, Bq, verb=verb)
 
-def complete_analysis(f: d.Filtration, weight_fun, max_dim = 1):
+def complete_analysis(f: dio.Filtration, weight_fun, max_dim = 1):
     f.sort()
     max_time = int(f[len(f)-1].data)
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
@@ -302,13 +302,13 @@ def complete_analysis(f: d.Filtration, weight_fun, max_dim = 1):
     
     return pd.DataFrame(barcodes)
 
-def compute_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False):
+def compute_Laplacian(f: dio.Filtration, q, s, t, weight_fun, verb=False):
     f.sort()
     max_time = f[len(f)-1].data
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
     return persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time, verb=verb)
 
-def compute_cross_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False, use_4 = False):
+def compute_cross_Laplacian(f: dio.Filtration, q, s, t, weight_fun, verb=False, use_4 = False):
     f.sort()
     max_time = f[len(f)-1].data
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
@@ -341,7 +341,7 @@ def compute_cross_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False, us
         return  (Lap_ijm1 - Lap_ij)
     
 
-def compute_vertical_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False, use_restriction = False):
+def compute_vertical_Laplacian(f: dio.Filtration, q, s, t, weight_fun, verb=False, use_restriction = False):
     f.sort()
     max_time = f[len(f)-1].data
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
@@ -361,7 +361,7 @@ def compute_vertical_Laplacian(f: d.Filtration, q, s, t, weight_fun, verb=False,
         return (Lap_ij-Lap_im1j)[:simplices_at_time(sm1)[q], :simplices_at_time(sm1)[q]]
     return  Lap_ij-Lap_im1j
 
-def complete_analysis_fast(f: d.Filtration, weight_fun, max_dim = 1):
+def complete_analysis_fast(f: dio.Filtration, weight_fun, max_dim = 1):
     f.sort()
     max_time = f[len(f)-1].data
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
@@ -472,7 +472,7 @@ def complete_analysis_fast(f: d.Filtration, weight_fun, max_dim = 1):
     
     return pd.DataFrame(barcodes)
 
-def complete_analysis_fastest(f: d.Filtration, weight_fun, max_dim = 1):
+def complete_analysis_fastest(f: dio.Filtration, weight_fun, max_dim = 1):
     """
     Requires one simplex added per time.
     """
@@ -567,7 +567,7 @@ def complete_analysis_fastest(f: d.Filtration, weight_fun, max_dim = 1):
     
     return pd.DataFrame(barcodes)
 
-def persistent_Laplacian_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1):
+def persistent_Laplacian_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1):
     f.sort()
     max_time = f[len(f)-1].data
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
@@ -747,8 +747,8 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
     x, y = np.meshgrid(extended_relevant_times, extended_relevant_times)
 
     if filtration is not None:
-        p = d.cohomology_persistence(filtration, 47, True)
-        dgms = d.init_diagrams(p, filtration)
+        p = dio.cohomology_persistence(filtration, 47, True)
+        dgms = dio.init_diagrams(p, filtration)
         barcodes_births, barcodes_deaths = [], []
         for q in range(len(dgms)):
             barcodes_births.append([])
@@ -785,7 +785,7 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
     fig.tight_layout()
     return fig, ax
 
-def plot_Laplacian_eigenvalues(f: d.Filtration, weight_fun, max_dim = 1, plot_types = "all", 
+def plot_Laplacian_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, plot_types = "all", 
                      plot_args_mesh = {}, 
                      plot_args_diag = {},
                      plot_args_line = {},
@@ -851,7 +851,7 @@ def plot_non_persistent_eigenvalues(eigenvalues, relevant_times, plot_type="all"
     fig.show()
     return fig, ax
 
-# def complete_analysis_new(f: d.Filtration, weight_fun, max_dim = 1):
+# def complete_analysis_new(f: dio.Filtration, weight_fun, max_dim = 1):
 #     f.sort()
 #     max_time = int(f[len(f)-1].data)
 #     boundary_matrices, name_to_idx, simplices_at_time = compute_boundary_matrices(f, weight_fun)

@@ -1,6 +1,6 @@
 import numpy as np
 from copy import deepcopy
-import dionysus as d
+import dionysus as dio
 import scipy
 import pandas as pd
 from sympy import Matrix, ZZ
@@ -134,8 +134,8 @@ def complete_analysis_Ren_fast(f, weight_fun):
     f.sort()
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
 
-    p = d.cohomology_persistence(f, 47, True)
-    dgms = d.init_diagrams(p, f)
+    p = dio.cohomology_persistence(f, 47, True)
+    dgms = dio.init_diagrams(p, f)
     barcodes = {"q": [], "birth": [], "death": [], "multiplicity": [], 
                 "torsion_ijm1": [], "torsion_ij": [], "torsion_im1jm1": [], "torsion_im1j": []}
     for q in range(len(dgms)):
@@ -193,7 +193,7 @@ def complete_analysis_Ren_fast(f, weight_fun):
     out_df["Weight"] = out_df.apply(lambda x: list_minus(list_minus(x["torsion_ij"], x["torsion_ijm1"]), list_minus(x["torsion_im1j"], x["torsion_im1jm1"])), axis=1)
     return out_df
 
-def complete_analysis_Ren(f: d.Filtration, weight_fun, max_dim = 1):
+def complete_analysis_Ren(f: dio.Filtration, weight_fun, max_dim = 1):
     f.sort()
     max_time = f[len(f)-1].data
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
