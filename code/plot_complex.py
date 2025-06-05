@@ -43,6 +43,9 @@ def draw_2d_simplicial_complex(simplices, pos=None, return_pos=False, ax = None)
     #List of 0-simplices
     nodes =list(set(itertools.chain(*simplices)))
     
+    if len(nodes) == 0:
+        return
+
     #List of 1-simplices
     edges = list(set(itertools.chain(*[[tuple(sorted((i, j))) for i, j in itertools.combinations(simplex, 2)] for simplex in simplices])))
 

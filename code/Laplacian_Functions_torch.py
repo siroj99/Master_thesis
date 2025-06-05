@@ -16,7 +16,7 @@ import torch
 from torch.nn import functional as F
 torch.set_default_dtype(torch.float64)
 
-def compute_boundary_matrices(f: dio.Filtration, weight_fun, device = "cuda"):
+def compute_boundary_matrices(f: dio.Filtration, weight_fun, device = "cpu"):
     t_old = 0
     relevant_times = []
     n_simplicies_seen_per_time = []
@@ -89,7 +89,7 @@ def compute_boundary_matrices(f: dio.Filtration, weight_fun, device = "cuda"):
 
     return boundary_matrices, name_to_idx, simplices_at_time, relevant_times
 
-def cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=False, Laplacian_fun = None, device="cuda"):
+def cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=False, Laplacian_fun = None, device="cpu"):
     t, s = relevant_times[t_i], relevant_times[s_i]
     tm1 = relevant_times[t_i-1]
 
@@ -224,14 +224,14 @@ def cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_
 
     return B12_st@(eye_st-B22_st_full)@B22_stm1_full@B12_st.T
 
-def calc_cross(f: dio.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False, Laplacian_fun = None, device = "cuda"):
+def calc_cross(f: dio.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False, Laplacian_fun = None, device = "cpu"):
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, device=device)
     # relevant_times = torch.tensor(relevant_times, dtype=torch.float64, device = device)
     t_i = np.argmin(np.abs(relevant_times - t))
     s_i = np.argmin(np.abs(relevant_times - s))
-    return cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=verb, Laplacian_fun= Laplacian_fun)
+    return cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=verb, Laplacian_fun= Laplacian_fun, device=device)
 
-def cross_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, Laplacian_fun = None, device = "cuda"):
+def cross_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, Laplacian_fun = None, device = "cpu"):
     f.sort()
 
     max_time = f[len(f)-1].data
@@ -258,17 +258,19 @@ def cross_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, 
                 #     print(f"q: {q}, s: {s}, t: {t}, evals: {eigenvalues[q][s][t]}, Lap:\n{Lap}")
     return eigenvalues, relevant_times
 
-def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, device = "cuda"):
+def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lambda x: 1, min_dim = 0, max_dim = 1, 
+                                            Laplacian_fun = None, device = "cpu",
+                                            compute_only_trace = False):
     f.sort()
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, device=device)
-    eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
+    eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(min_dim, max_dim+1)}
     # eigenvalues = {q: {s: {relevant_times[0]: []} if s==relevant_times[0] else {} for s in relevant_times} for q in range(max_dim+1)}
     # projection_matrices = {q: {s: {t: torch.tensor([], dtype=torch.float64) for t in range(len(relevant_times))} for s in  range(len(relevant_times))} for q in range(max_dim+1)}
     
     if Laplacian_fun is None:
         Laplacian_fun = lambda B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye: B22_sm1t@B22_stm1@(eye-B22_st)@B22_stm1@B22_sm1t
     
-    for q in range(max_dim+1): # TODO: CHANGE THIS!!!!!!!!!!!!!
+    for q in range(min_dim, max_dim+1): # TODO: CHANGE THIS!!!!!!!!!!!!!
         projection_matrices = {"sm1": {t: None for t in range(len(relevant_times))}, "s": {t: None for t in range(len(relevant_times))}}
         s_i_bar = tqdm(range(len(relevant_times)-1), leave=False)
         pinv_total_time = 0
@@ -348,23 +350,37 @@ def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lamb
                             
                             pinv_top_part = A_km1_pinv-d_k@b_k
 
+                            
                             # This instead of the full matrix multiplication
-                            # cur_B22 -= d_k@b_k@A_km1
-                            # cur_B22 = torch.block_diag(cur_B22, b_k@a_k)
+                            added_row = b_k@A_km1
+                            b_ka_k = (b_k@a_k)
+                            added_row = (d_k*(1-b_ka_k))
+                            cur_B22 = cur_B22 - d_k@(added_row.T)
+                            cur_B22 = torch.block_diag(cur_B22, b_ka_k)
 
-                            # added_row = b_k@A_km1
-                            # cur_B22[[-1], :-1] = added_row
-                            # cur_B22[:-1, [-1]] = added_row.T
+                            cur_B22[[-1], :-1] = added_row.T
+                            cur_B22[:-1, [-1]] = added_row
                             # -------------------------------------------------
+                            # Also instead of full matrix multiplication, but now removed cur_B22 in algorithm, which allows the whole computation to be written as a subtraction.
+                            # Is a bit slower, than above method though.
+                            # b_ka_k = (b_k@a_k).item()
+                            # d_k_ext = torch.vstack([d_k, torch.tensor([[-1]])])
+                            # sub_matrix = (1-b_ka_k)*d_k_ext@(d_k_ext.T)
+                            
+                            # sub_matrix[-1, -1] = -1*b_ka_k
+                            # cur_B22 = F.pad(cur_B22, (0,1,0,1)) - sub_matrix
+                            # -------------------------------------------------
+
 
                             A_km1_pinv = torch.vstack((pinv_top_part, b_k))
                             A_km1 = torch.hstack((A_km1, a_k))
 
 
-                        greville_total_time += time.time() - stime2
 
                         t_A_km1 = t
-                        cur_B22 = A_km1_pinv@A_km1
+                        # cur_B22 = A_km1_pinv@A_km1
+
+                        greville_total_time += time.time() - stime2
                     
                     # Else matrix stays the same, however A_km1 can still differ. Don't think we need to update howerer as the updated A_km1 is only used when n_q+1^t>N_q+1^t_A_km1.
                 pinv_total_time += time.time() - stime
@@ -403,8 +419,10 @@ def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lamb
                                 lap_total_time += time.time() - stime
                                 stime = time.time()
                                 # cross_Lap = Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye)
-
-                                eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
+                                if not compute_only_trace:
+                                    eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
+                                else:
+                                    eigenvalues[q][s][t] = torch.trace(cross_Lap).cpu().numpy().reshape((1))
                                 eig_total_time += time.time() - stime
 
                             else:
@@ -429,7 +447,10 @@ def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lamb
                             lap_total_time += time.time() - stime
                             stime = time.time()
 
-                            eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
+                            if not compute_only_trace:
+                                eigenvalues[q][s][t] = torch.linalg.eigvals(cross_Lap).cpu().numpy().real
+                            else:
+                                eigenvalues[q][s][t] = torch.trace(cross_Lap).cpu().numpy().reshape((1))
                             eig_total_time += time.time() - stime
                     else:
                         lap_total_time += time.time() - stime
@@ -443,13 +464,19 @@ def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lamb
                 # Saving and removing the right matrices
                 if s_i > 0:
                     projection_matrices["s"][t_i] = cur_B22
-                    projection_matrices["sm1"][t_i-1] = projection_matrices["s"][t_i-1]
+                    if t_i != s_i:
+                        projection_matrices["sm1"][t_i-1] = projection_matrices["s"][t_i-1]
+                    else:
+                        projection_matrices["sm1"][t_i-1] = None
                     projection_matrices["s"][t_i-1] = None
+
+                    
                 else:
                     projection_matrices["sm1"][t_i] = cur_B22
 
                 if t_i == len(relevant_times)-1:
                     projection_matrices["sm1"][t_i] = cur_B22
+
 
                 save_total_time += time.time() - stime
 
@@ -457,7 +484,7 @@ def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lamb
 
 
 
-def cross_Laplaican_eigenvalues_fast(f: dio.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, device = "cuda", use_greville = False):
+def cross_Laplaican_eigenvalues_fast(f: dio.Filtration, weight_fun = lambda x: 1, max_dim = 1, Laplacian_fun = None, device = "cpu", use_greville = False):
     f.sort()
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, device=device)
     eigenvalues = {q: {s: {t: np.array([]) for t in relevant_times} for s in relevant_times} for q in range(max_dim+1)}
@@ -696,35 +723,25 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
     return fig, ax
 
 
-def plot_trace_diagram(f, eigenvalues, show=False, max_dim=2,
+def plot_trace_diagram(f, eigenvalues, show=False, min_dim=0, max_dim=1,
                  line_style=None, pt_style_normal=None,
                  limits = None):
-    """
-    Plot the persistence diagram.
-
-    Arguments:
-        dgm (Diagram): See for example `init_diagrams`.
-
-    Keyword Arguments:
-        show (bool): Display the plot. (Default: False)
-        labels (bool): Set axis labels. (Default: False)
-        ax (AxesSubplot): Axes that should be used for plotting (Default: None)
-        pt_style (dict): argments passed to `ax.scatter` for style of points.
-        line_style (dict): argments passed to `ax.plot` for style of diagonal line.
-    """
 
     p = dio.cohomology_persistence(f, 47, True)
     dgms = dio.init_diagrams(p, f)
-    if show:
-        fig, ax = plt.subplots(1, max_dim+1, figsize=(5*(max_dim+1),5))
+    fig, ax = plt.subplots(1, max_dim+1-min_dim, figsize=(6*(max_dim+1-min_dim),5))
 
-    s_lists = []
-    t_lists = []
-    cmaps = []
+    s_lists = [[]]*(max_dim + 1)
+    t_lists = [[]]*(max_dim + 1)
+    cmaps = [[]]*(max_dim + 1)
 
-    for q, dgm in enumerate(dgms):
-        if q > max_dim:
-            break
+    for q in range(min_dim, max_dim+1):
+        dgm = dgms[q]
+
+        if max_dim+1-min_dim > 1:
+            cur_ax = ax[q-min_dim]
+        else:
+            cur_ax = ax
 
         line_kwargs = {}
         pt_kwargs = {"c": "black", "marker": "x", "alpha": 0.5, "s": 100}
@@ -735,44 +752,65 @@ def plot_trace_diagram(f, eigenvalues, show=False, max_dim=2,
 
 
         inf = float('inf')
-        min_birth,max_birth,min_death,max_death = inf,-1,inf,-1
-        if not limits:
-            min_birth = min(min_birth, min((p.birth for p in dgm if p.birth != inf))-1)
-            max_birth = max(max_birth, max((p.birth for p in dgm if p.birth != inf))+1)
-            min_death = min(min_death, min((p.death for p in dgm if p.death != inf))-1)
-            max_death = max(max_death, max((p.death for p in dgm if p.death != inf))+1)
-        else:
-            min_birth, max_birth, min_death, max_death = limits
-
-
-        if show:
-            ax[q].set_aspect('equal', 'datalim')
-
-            min_diag = min(min_birth, min_death)
-            max_diag = max(max_birth, max_death)
-            ax[q].scatter([p.birth for p in dgm], [p.death if p.death != inf else max_death for p in dgm], **pt_kwargs)
-            ax[q].plot([min_diag, max_diag], [min_diag, max_diag], **line_kwargs)
 
         s_list = []
         t_list = []
         cmap = []
         for s in eigenvalues[q].keys():
             for t in eigenvalues[q][s].keys():
-                if np.sum(eigenvalues[q][s][t]) > 1e-10:
+                eval_sum = np.sum(eigenvalues[q][s][t])
+                if eval_sum > 1e-10:
+                    # if eval_sum < 0.1:
+                    #     print(s, t, eval_sum)
                     s_list.append(s)
                     t_list.append(t)
-                    cmap.append(np.sum(eigenvalues[q][s][t]))
+                    cmap.append(eval_sum)
 
-        s_lists.append(s_list)
-        t_lists.append(t_list)
-        cmaps.append(cmap)
+        s_lists[q] = (s_list)
+        t_lists[q] = (t_list)
+        cmaps[q] = (cmap)
 
-        if show:
-            ax[q].scatter(s_list, t_list, c=cmap)
+        if len(s_list) > 0:
+            # min_diag = np.min(s_list)*0.9
+            min_diag = 0
+            max_diag = np.max(t_list)*1.1
+        else:
+            min_diag = -1
+            max_diag = 2
 
-            ax[q].set_xlabel('birth')
-            ax[q].set_ylabel('death')
-            ax[q].set_title(f"Persistence diagram (dim {q})")
+        
+        # min_birth,max_birth,min_death,max_death = inf,-1,inf,-1
+        # if not limits:
+        #     min_birth = min(min_birth, min((p.birth for p in dgm))*0.9)
+        #     max_birth = max(max_birth, max((p.birth for p in dgm)))
+
+        #     for p in dgm:
+        #         if p.death != inf:
+        #             max_death = max(max_death, max((p.death for p in dgm if p.death != inf))*1.1)
+        #             break
+        #     if max_death == -1:
+        #         max_death = max_birth*1.1
+        # else:
+        #     min_birth, max_birth, min_death, max_death = limits
+
+
+        cur_ax.set_aspect('equal', 'datalim')
+
+        cur_ax.scatter([p.birth for p in dgm], [p.death if p.death != inf else max_diag for p in dgm], **pt_kwargs)
+
+       
+
+        scatter_im = cur_ax.scatter(s_list, t_list, c=cmap)
+        plt.colorbar(scatter_im, ax=cur_ax, pad=0.15)
+
+        # Line y=x
+        cur_ax.plot([min_diag, max_diag], [min_diag, max_diag], **line_kwargs)
+        # Line for infinity
+        cur_ax.plot([min_diag, max_diag], [max_diag, max_diag], c="black")
+
+        cur_ax.set_xlabel('birth')
+        cur_ax.set_ylabel('death')
+        cur_ax.set_title(f"Persistence diagram (dim {q})")
 
         ## clip the view
         #plt.axes().set_xlim([min_birth, max_birth])
@@ -782,14 +820,154 @@ def plot_trace_diagram(f, eigenvalues, show=False, max_dim=2,
         fig.show()
     return s_lists, t_lists, cmaps
 
+def plot_trace_diagram_no_f(dgms, eigenvalues, show=False, min_dim=0, max_dim=1,
+                 line_style=None, pt_style_normal=None,
+                 limits = None):
 
-def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, plot_types = "all", method = "slow", Laplacian_fun = None, integer_time_steps = False, device = "cuda",
+    fig, ax = plt.subplots(1, max_dim+1-min_dim, figsize=(6*(max_dim+1-min_dim),5))
+
+    s_lists = [[]]*(max_dim + 1)
+    t_lists = [[]]*(max_dim + 1)
+    cmaps = [[]]*(max_dim + 1)
+
+    for q in range(min_dim, max_dim+1):
+        dgm = dgms[q]
+
+        if max_dim+1-min_dim > 1:
+            cur_ax = ax[q-min_dim]
+        else:
+            cur_ax = ax
+
+        line_kwargs = {}
+        pt_kwargs = {"c": "black", "marker": "x", "alpha": 0.5, "s": 100}
+        if pt_style_normal is not None:
+            pt_kwargs.update(pt_style_normal)
+        if line_style is not None:
+            line_kwargs.update(line_style)
+
+
+        inf = float('inf')
+
+        s_list = []
+        t_list = []
+        cmap = []
+        for s in eigenvalues[q].keys():
+            for t in eigenvalues[q][s].keys():
+                eval_sum = np.sum(eigenvalues[q][s][t])
+                if eval_sum > 1e-10:
+                    if eval_sum < 0.1:
+                        print(s, t, eval_sum)
+                    s_list.append(s)
+                    t_list.append(t)
+                    cmap.append(eval_sum)
+
+        s_lists[q] = (s_list)
+        t_lists[q] = (t_list)
+        cmaps[q] = (cmap)
+
+        if len(s_list) > 0:
+            # min_diag = np.min(s_list)*0.9
+            min_diag = 0
+            max_diag = np.max(t_list)*1.1
+        else:
+            min_diag = -1
+            max_diag = 2
+
+        
+        # min_birth,max_birth,min_death,max_death = inf,-1,inf,-1
+        # if not limits:
+        #     min_birth = min(min_birth, min((p.birth for p in dgm))*0.9)
+        #     max_birth = max(max_birth, max((p.birth for p in dgm)))
+
+        #     for p in dgm:
+        #         if p.death != inf:
+        #             max_death = max(max_death, max((p.death for p in dgm if p.death != inf))*1.1)
+        #             break
+        #     if max_death == -1:
+        #         max_death = max_birth*1.1
+        # else:
+        #     min_birth, max_birth, min_death, max_death = limits
+
+
+        cur_ax.set_aspect('equal', 'datalim')
+
+        cur_ax.scatter([p.birth for p in dgm], [p.death if p.death != inf else max_diag for p in dgm], **pt_kwargs)
+
+       
+
+        scatter_im = cur_ax.scatter(s_list, t_list, c=cmap)
+        plt.colorbar(scatter_im, ax=cur_ax, pad=0.15)
+
+        # Line y=x
+        cur_ax.plot([min_diag, max_diag], [min_diag, max_diag], **line_kwargs)
+        # Line for infinity
+        cur_ax.plot([min_diag, max_diag], [max_diag, max_diag], c="black")
+
+        cur_ax.set_xlabel('birth')
+        cur_ax.set_ylabel('death')
+        cur_ax.set_title(f"Persistence diagram (dim {q})")
+
+        ## clip the view
+        #plt.axes().set_xlim([min_birth, max_birth])
+        #plt.axes().set_ylim([min_death, max_death])
+
+    if show:
+        fig.show()
+    return s_lists, t_lists, cmaps
+
+def plot_trace_histogram(eigenvalues, show=False, max_dim=2,
+                 hist_style=None):
+    if show:
+        fig, ax = plt.subplots(1, max_dim+1, figsize=(5*(max_dim+1),5))
+
+    # s_lists = []
+    # t_lists = []
+    cmaps = []
+
+    for q in range(max_dim+1):
+        hist_kwargs = {"bins": 100}
+        if hist_style is not None:
+            hist_kwargs.update(hist_style)
+
+        # s_list = []
+        # t_list = []
+        cmap = []
+        for s in eigenvalues[q].keys():
+            for t in eigenvalues[q][s].keys():
+                if np.sum(eigenvalues[q][s][t]) > 1e-10:
+                    # s_list.append(s)
+                    # t_list.append(t)
+                    cmap.append(np.sum(eigenvalues[q][s][t]))
+
+        # s_lists.append(s_list)
+        # t_lists.append(t_list)
+        cmaps.append(cmap)
+
+        if show:
+            # ax[q].scatter(s_list, t_list, c=cmap)
+            ax[q].hist(cmap, **hist_kwargs)
+
+            # ax[q].set_xlabel('birth')
+            # ax[q].set_ylabel('death')
+            ax[q].set_title(f"Histogram of trace (dim {q})")
+
+        ## clip the view
+        #plt.axes().set_xlim([min_birth, max_birth])
+        #plt.axes().set_ylim([min_death, max_death])
+
+    if show:
+        fig.show()
+    return cmaps #s_lists, t_lists, 
+
+
+def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, min_dim = 0, max_dim = 1, plot_types = "all", method = "slow", Laplacian_fun = None, integer_time_steps = False, device = "cpu",
                      plot_args_mesh = {}, 
                      plot_args_diag = {},
                      plot_args_line = {},
                      plot_type_to_fun = {},
                      plot_diagram = False,
-                     show_plot = True):
+                     show_plot = True,
+                     compute_only_trace = False):
     """
     lapalcian_type: "persistent" for normal laplacian, or "cross" for cross laplacian, "cross_cor10" for cross Laplacian in two directions.
     """
@@ -799,15 +977,18 @@ def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, p
         if method == "greville":
             eigenvalues, relevant_times = cross_Laplaican_eigenvalues_fast(f, weight_fun=weight_fun, max_dim=max_dim, Laplacian_fun = Laplacian_fun, device=device, use_greville=True)
         elif method == "less_memory":
-            eigenvalues, relevant_times = cross_Laplaican_eigenvalues_less_memory(f, weight_fun=weight_fun, max_dim=max_dim, Laplacian_fun = Laplacian_fun, device=device)
+            eigenvalues, relevant_times = cross_Laplaican_eigenvalues_less_memory(f, weight_fun=weight_fun, min_dim=min_dim, max_dim=max_dim, Laplacian_fun = Laplacian_fun, device=device, compute_only_trace=compute_only_trace)
         else:
             eigenvalues, relevant_times = cross_Laplaican_eigenvalues_fast(f, weight_fun=weight_fun, max_dim=max_dim, Laplacian_fun = Laplacian_fun, device=device)
 
     if plot_diagram:
-        s_lists, t_lists, cmaps = plot_trace_diagram(f, eigenvalues, show=show_plot, max_dim=max_dim,
+        s_lists, t_lists, cmaps = plot_trace_diagram(f, eigenvalues, show=show_plot, min_dim=min_dim, max_dim=max_dim,
                      line_style=plot_args_line, pt_style_normal=plot_args_diag,
                      limits = (relevant_times[0], relevant_times[-1]*1.2, relevant_times[0], relevant_times[-1]*1.2))
         return eigenvalues, relevant_times, s_lists, t_lists, cmaps
+
+    # elif plot_histogram:
+    #     cmaps = plot_trace_histogram(eigenvalues, show=show_plot, max_dim=max_dim,)
     
     else:
         if show_plot:
