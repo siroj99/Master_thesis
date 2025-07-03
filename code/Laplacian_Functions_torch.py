@@ -231,6 +231,39 @@ def calc_cross(f: dio.Filtration, q, s, t, weight_fun = lambda x: 1, verb=False,
     s_i = np.argmin(np.abs(relevant_times - s))
     return cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=verb, Laplacian_fun= Laplacian_fun, device=device)
 
+def calc_extended_up_Laplacian(f, q, s, t, weight_fun=lambda _ : 1, verb=False, device = "cpu"):
+    boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun, device=device)
+    t_i = np.argmin(np.abs(relevant_times - t))
+    s_i = np.argmin(np.abs(relevant_times - s))
+    if s_i == 0:
+        return 0
+
+    sm1 = relevant_times[s_i-1]
+    tm1 = relevant_times[t_i-1]
+    
+    B_sm1 = boundary_matrices[q+1][:simplices_at_time(sm1)[q], :simplices_at_time(sm1)[q+1]]
+    up_Lap_sm1 = B_sm1@B_sm1.T
+
+    if verb:
+        print(f"up_Lap_sm1:\n{up_Lap_sm1}")
+
+    B22_sm1t = boundary_matrices[q+1][simplices_at_time(sm1)[q]:simplices_at_time(t)[q], simplices_at_time(sm1)[q+1]:simplices_at_time(t)[q+1]]
+    A_matrix = boundary_matrices[q+1][:simplices_at_time(s)[q], simplices_at_time(sm1)[q+1]:simplices_at_time(t)[q+1]]
+
+    B22_sm1t_full = torch.linalg.pinv(B22_sm1t)@B22_sm1t
+
+    second_part = A_matrix@(torch.eye(B22_sm1t_full.shape[0], device=device) - B22_sm1t_full)@A_matrix.T
+    if verb:
+        print(f"second_part:\n{second_part}")
+    first_part = torch.zeros_like(second_part, device=device)
+    first_part[:simplices_at_time(sm1)[q], :simplices_at_time(sm1)[q]] = up_Lap_sm1
+    if verb:
+        print(f"first_part:\n{first_part}")
+
+    return first_part + second_part
+
+
+
 def cross_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, Laplacian_fun = None, device = "cpu"):
     f.sort()
 
@@ -270,7 +303,7 @@ def cross_Laplaican_eigenvalues_less_memory(f: dio.Filtration, weight_fun = lamb
     if Laplacian_fun is None:
         Laplacian_fun = lambda B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye: B22_sm1t@B22_stm1@(eye-B22_st)@B22_stm1@B22_sm1t
     
-    for q in range(min_dim, max_dim+1): # TODO: CHANGE THIS!!!!!!!!!!!!!
+    for q in range(min_dim, max_dim+1):
         projection_matrices = {"sm1": {t: None for t in range(len(relevant_times))}, "s": {t: None for t in range(len(relevant_times))}}
         s_i_bar = tqdm(range(len(relevant_times)-1), leave=False)
         pinv_total_time = 0
@@ -630,32 +663,34 @@ def cross_Laplaican_eigenvalues_fast(f: dio.Filtration, weight_fun = lambda x: 1
 
     return eigenvalues, relevant_times
 
-
-
-def eig_plot_helper(x, fun, eps = 1e-8):
+def eig_plot_helper(x, fun, use_pos = True, eps = 1e-10):
     if len(x) > 0:
-        pos_x = x[np.abs(x)>eps]
-        if len(pos_x) > 0:
-            return fun(pos_x)
+        if not use_pos:
+            return fun(x)
         else:
-            return 0
+            pos_x = x[np.abs(x)>eps]
+            if len(pos_x) > 0:
+                return fun(pos_x)
+            else:
+                return 0
     else:
         return np.nan
+
 
 def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration = None, integer_time_steps = False,
                      plot_args_mesh = {}, 
                      plot_args_diag = {},
                      plot_args_line = {},
-                     plot_type_to_fun = {}):
-    # NOTE: eigenvalues should be a numpy array, not a torch tensor.
+                     plot_type_to_fun = {},
+                     plot_value_on_diagonal = False):
     # Can choose these plot types
     plot_type_to_fun = {
-        "Min": np.min,
-        "Max": np.max,
-        "Sum": np.sum,
-        "Mean": np.mean,
-        "Prod": np.prod,
-        "Gmean": ss.gmean
+        "Min eigenvalue": (np.min, True),
+        "Max eigenvalue": (np.max, False),
+        "Sum of eigenvalues": (np.sum, False),
+        "Mean of eigenvalues": (np.mean, True),
+        "Product of eigenvalues": (np.prod, True),
+        "Gmean of eigenvalues": (ss.gmean, True)
     } | plot_type_to_fun
 
     plot_args_mesh = {"alpha": 1, "cmap": "jet"} | plot_args_mesh
@@ -700,31 +735,127 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
     for q in range(max_dim+1):
         df_evals = pd.DataFrame(eigenvalues[q])
         for ax_i, plot_type in enumerate(plot_types):
-            if plot_type == "Prod":
+            if plot_type == "Product of eigenvalues":
                 plot_args_mesh["norm"] = "log"
             else:
                 plot_args_mesh["norm"] = "linear"
-            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, plot_type_to_fun[plot_type]))).values, **plot_args_mesh)
+            plot_fun, use_pos = plot_type_to_fun[plot_type]
+            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, plot_fun, use_pos=use_pos))).values, **plot_args_mesh)
             plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
             if q == 0:
-                cur_ax(q, ax_i).set_title(f"{plot_type} eigenvalue")
+                cur_ax(q, ax_i).set_title(f"{plot_type}")
+            if q == max_dim:
+                cur_ax(q, ax_i).set_xlabel("s")
             if filtration is not None:
                 cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], **plot_args_diag)
 
-            ax_n = cur_ax(q, ax_i).twinx()
-            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], plot_type_to_fun[plot_type]) for t in relevant_times for _ in (0,1)][:-1], **plot_args_line)
-            if plot_type == "Prod":
-                ax_n.set_yscale("log")
+            # Plot diagonal
+            if plot_value_on_diagonal:
+                ax_n = cur_ax(q, ax_i).twinx()
+                ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], plot_fun, use_pos=use_pos) for t in relevant_times for _ in (0,1)][:-1], **plot_args_line)
+                if plot_type == "Product of eigenvalues":
+                    ax_n.set_yscale("log")
 
             if integer_time_steps:
                 cur_ax(q, ax_i).yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-        cur_ax(q, 0).set_ylabel(f"q={q}")
+        cur_ax(q, 0).set_ylabel(f"q={q}\n\nt")
     fig.tight_layout()
     return fig, ax
 
 
+# def eig_plot_helper(x, fun, eps = 1e-8):
+#     if len(x) > 0:
+#         pos_x = x[np.abs(x)>eps]
+#         if len(pos_x) > 0:
+#             return fun(pos_x)
+#         else:
+#             return 0
+#     else:
+#         return np.nan
+
+# def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration = None, integer_time_steps = False,
+#                      plot_args_mesh = {}, 
+#                      plot_args_diag = {},
+#                      plot_args_line = {},
+#                      plot_type_to_fun = {}):
+#     # NOTE: eigenvalues should be a numpy array, not a torch tensor.
+#     # Can choose these plot types
+#     plot_type_to_fun = {
+#         "Min": np.min,
+#         "Max": np.max,
+#         "Sum": np.sum,
+#         "Mean": np.mean,
+#         "Prod": np.prod,
+#         "Gmean": ss.gmean
+#     } | plot_type_to_fun
+
+#     plot_args_mesh = {"alpha": 1, "cmap": "jet"} | plot_args_mesh
+#     plot_args_diag = {"c": "black", "marker": ".", "alpha": 0.75} | plot_args_diag
+#     plot_args_line = {"c": "r", "alpha": 0.5} | plot_args_line
+
+#     max_dim = max(eigenvalues.keys())
+
+#     if plot_types == "all":
+#         plot_types = list(plot_type_to_fun.keys())
+
+#     fig, ax = plt.subplots(max_dim+1, len(plot_types))
+#     fig.set_size_inches(4*len(plot_types), 4*(max_dim+1))
+#     if len(plot_types) == 1:
+#         cur_ax = lambda x,y: ax[x]
+#     else:
+#         cur_ax = lambda x,y: ax[x, y]
+        
+
+#     fig.gca()
+
+#     # For pcolormesh, we need a grid that is one bigger as every rectangle needs starting and ending points.
+#     # Now added a point the same distance away as the last two real points.
+#     relevant_times = relevant_times.tolist()
+#     extended_relevant_times = relevant_times+[2*relevant_times[-1]-relevant_times[-2]]
+#     x, y = np.meshgrid(extended_relevant_times, extended_relevant_times)
+
+#     if filtration is not None:
+#         p = dio.cohomology_persistence(filtration, 47, True)
+#         dgms = dio.init_diagrams(p, filtration)
+#         barcodes_births, barcodes_deaths = [], []
+#         for q in range(len(dgms)):
+#             barcodes_births.append([])
+#             barcodes_deaths.append([])
+#             for p in dgms[q]:
+#                 barcodes_births[q].append(p.birth)
+#                 if p.death != np.inf:
+#                     barcodes_deaths[q].append(p.death)
+#                 else:
+#                     barcodes_deaths[q].append(extended_relevant_times[-1])
+
+#     for q in range(max_dim+1):
+#         df_evals = pd.DataFrame(eigenvalues[q])
+#         for ax_i, plot_type in enumerate(plot_types):
+#             if plot_type == "Prod":
+#                 plot_args_mesh["norm"] = "log"
+#             else:
+#                 plot_args_mesh["norm"] = "linear"
+#             im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, plot_type_to_fun[plot_type]))).values, **plot_args_mesh)
+#             plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
+#             if q == 0:
+#                 cur_ax(q, ax_i).set_title(f"{plot_type} eigenvalue")
+#             if filtration is not None:
+#                 cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], **plot_args_diag)
+
+#             ax_n = cur_ax(q, ax_i).twinx()
+#             ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], plot_type_to_fun[plot_type]) for t in relevant_times for _ in (0,1)][:-1], **plot_args_line)
+#             if plot_type == "Prod":
+#                 ax_n.set_yscale("log")
+
+#             if integer_time_steps:
+#                 cur_ax(q, ax_i).yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+#         cur_ax(q, 0).set_ylabel(f"q={q}")
+#     fig.tight_layout()
+#     return fig, ax
+
+
 def plot_trace_diagram(f, eigenvalues, show=False, min_dim=0, max_dim=1,
-                 line_style=None, pt_style_normal=None,
+                 line_style=None, pt_style_normal=None, lap_pt_style=None,
                  limits = None):
 
     p = dio.cohomology_persistence(f, 47, True)
@@ -749,6 +880,9 @@ def plot_trace_diagram(f, eigenvalues, show=False, min_dim=0, max_dim=1,
             pt_kwargs.update(pt_style_normal)
         if line_style is not None:
             line_kwargs.update(line_style)
+        lap_pt_kwargs = {}
+        if lap_pt_style is not None:
+            lap_pt_kwargs.update(lap_pt_style)
 
 
         inf = float('inf')
@@ -800,7 +934,7 @@ def plot_trace_diagram(f, eigenvalues, show=False, min_dim=0, max_dim=1,
 
        
 
-        scatter_im = cur_ax.scatter(s_list, t_list, c=cmap)
+        scatter_im = cur_ax.scatter(s_list, t_list, c=cmap, **lap_pt_kwargs)
         plt.colorbar(scatter_im, ax=cur_ax, pad=0.15)
 
         # Line y=x
@@ -821,7 +955,7 @@ def plot_trace_diagram(f, eigenvalues, show=False, min_dim=0, max_dim=1,
     return s_lists, t_lists, cmaps
 
 def plot_trace_diagram_no_f(dgms, eigenvalues, show=False, min_dim=0, max_dim=1,
-                 line_style=None, pt_style_normal=None,
+                 line_style=None, pt_style_normal=None, lap_pt_style=None,
                  limits = None):
 
     fig, ax = plt.subplots(1, max_dim+1-min_dim, figsize=(6*(max_dim+1-min_dim),5))
@@ -844,6 +978,9 @@ def plot_trace_diagram_no_f(dgms, eigenvalues, show=False, min_dim=0, max_dim=1,
             pt_kwargs.update(pt_style_normal)
         if line_style is not None:
             line_kwargs.update(line_style)
+        lap_pt_kwargs = {}  
+        if lap_pt_style is not None:
+            lap_pt_kwargs.update(lap_pt_style)
 
 
         inf = float('inf')
@@ -895,7 +1032,7 @@ def plot_trace_diagram_no_f(dgms, eigenvalues, show=False, min_dim=0, max_dim=1,
 
        
 
-        scatter_im = cur_ax.scatter(s_list, t_list, c=cmap)
+        scatter_im = cur_ax.scatter(s_list, t_list, c=cmap, **lap_pt_kwargs)
         plt.colorbar(scatter_im, ax=cur_ax, pad=0.15)
 
         # Line y=x
@@ -965,9 +1102,11 @@ def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, min_dim = 0, m
                      plot_args_diag = {},
                      plot_args_line = {},
                      plot_type_to_fun = {},
+                     lap_pt_style = {},
                      plot_diagram = False,
                      show_plot = True,
-                     compute_only_trace = False):
+                     compute_only_trace = False,
+                     plot_value_on_diagonal = False):
     """
     lapalcian_type: "persistent" for normal laplacian, or "cross" for cross laplacian, "cross_cor10" for cross Laplacian in two directions.
     """
@@ -983,7 +1122,7 @@ def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, min_dim = 0, m
 
     if plot_diagram:
         s_lists, t_lists, cmaps = plot_trace_diagram(f, eigenvalues, show=show_plot, min_dim=min_dim, max_dim=max_dim,
-                     line_style=plot_args_line, pt_style_normal=plot_args_diag,
+                     line_style=plot_args_line, pt_style_normal=plot_args_diag, lap_pt_style=lap_pt_style,
                      limits = (relevant_times[0], relevant_times[-1]*1.2, relevant_times[0], relevant_times[-1]*1.2))
         return eigenvalues, relevant_times, s_lists, t_lists, cmaps
 
@@ -994,7 +1133,8 @@ def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, min_dim = 0, m
         if show_plot:
             fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_types=plot_types, filtration=f, integer_time_steps=integer_time_steps,
                                 plot_args_mesh = plot_args_mesh, plot_args_diag=plot_args_diag,
-                                plot_args_line=plot_args_line, plot_type_to_fun=plot_type_to_fun)
+                                plot_args_line=plot_args_line, plot_type_to_fun=plot_type_to_fun,
+                                plot_value_on_diagonal = plot_value_on_diagonal)
             return eigenvalues, relevant_times, fig, ax
         else:
             return eigenvalues, relevant_times

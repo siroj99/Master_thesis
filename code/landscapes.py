@@ -89,6 +89,16 @@ class Landscape(object):
             return self.computed_norm, self.norm_error
         return self.computed_norm
         
+    def sum_k(self):
+        new_land = Landscape(max_t = self.max_t, max_dim=self.max_dim)
+        new_land.evaluations = {q: {} for q in range(self.max_dim+1)}
+        for q in range(self.max_dim+1):
+            k_combined = [self.evaluations[q][k] for k in range(len(self.evaluations[q].keys()))]
+            if len(k_combined) > 0:
+                new_land.evaluations[q][0] = np.sum(k_combined, axis=0)
+            else:
+                new_land.evaluations[q][0] = np.zeros(len(new_land.evaluations[q-1][0]))
+        return new_land
     # def compute_statistic(self, land_list, limit=1000):
     #     if isinstance(land_list, list):
     #         difference = 0
@@ -212,9 +222,18 @@ class Landscape(object):
                 # ax[dim].plot(np.linspace(0, self.max_t, len(self.evaluations[dim][k]))[:max_non_zero], self.evaluations[dim][k][:max_non_zero], c={0: "b", 1: "r", 2: "g", 3: "y"}[dim])
                 ax[dim].plot(np.linspace(0, self.max_t, len(self.evaluations[dim][k])), self.evaluations[dim][k])#, c={0: "b", 1: "r", 2: "g", 3: "y"}[dim])
             
+
             if limits is not None:
-                ax[dim].set_xlim(limits[0], limits[1])
-                ax[dim].set_ylim(limits[2], limits[3])
+                if isinstance(limits[0], list):
+                    if len(limits) > dim-self.min_dim:
+                        ax[dim].set_xlim(limits[dim-self.min_dim][0], limits[dim-self.min_dim][1])
+                        ax[dim].set_ylim(limits[dim-self.min_dim][2], limits[dim-self.min_dim][3])
+                else:
+                    ax[dim].set_xlim(limits[0], limits[1])
+                    ax[dim].set_ylim(limits[2], limits[3])
+            # if limits is not None:
+            #     ax[dim].set_xlim(limits[0], limits[1])
+            #     ax[dim].set_ylim(limits[2], limits[3])
 
             ax[dim].legend([f"k={k}" for k in range(min(len(self.evaluations[dim].keys()), max_k))])
             ax[dim].set_xlabel("t")
@@ -252,9 +271,9 @@ class Lap_Landscape(object):
             self.eigenvalues = None
             self.points = None
 
-    def show_trace_diagram(self, show=True):
+    def show_trace_diagram(self, show=True, lap_pt_style=None):
         if self.dgms is not None and self.eigenvalues is not None:
-            plot_trace_diagram_no_f(self.dgms, self.eigenvalues, show=show, min_dim=self.min_dim, max_dim=self.max_dim)
+            plot_trace_diagram_no_f(self.dgms, self.eigenvalues, show=show, min_dim=self.min_dim, max_dim=self.max_dim, lap_pt_style=lap_pt_style)
         elif self.f is not None and self.Laplacian_fun is not None:
                 if self.eigenvalues is None:
                     self.eigenvalues, self.relevant_times = cross_Laplaican_eigenvalues_less_memory(self.f, device="cpu", Laplacian_fun=self.Laplacian_fun, min_dim=self.min_dim, max_dim=self.max_dim, compute_only_trace=self.compute_only_trace)
@@ -337,6 +356,8 @@ class Lap_Landscape(object):
             k_combined = [self.evaluations[q][k] for k in range(len(self.evaluations[q].keys()))]
             if len(k_combined) > 0:
                 new_land.evaluations[q][0] = np.sum(k_combined, axis=0)
+            else:
+                new_land.evaluations[q][0] = np.zeros(len(new_land.evaluations[q-1][0]))
         return new_land
 
         
@@ -470,8 +491,13 @@ class Lap_Landscape(object):
                 cur_ax.plot(np.linspace(0, self.max_t, len(self.evaluations[dim][k])), self.evaluations[dim][k])#, c={0: "b", 1: "r", 2: "g", 3: "y"}[dim])
             
             if limits is not None:
-                cur_ax.set_xlim(limits[0], limits[1])
-                cur_ax.set_ylim(limits[2], limits[3])
+                if isinstance(limits[0], list):
+                    if len(limits) > dim-self.min_dim:
+                        cur_ax.set_xlim(limits[dim-self.min_dim][0], limits[dim-self.min_dim][1])
+                        cur_ax.set_ylim(limits[dim-self.min_dim][2], limits[dim-self.min_dim][3])
+                else:
+                    cur_ax.set_xlim(limits[0], limits[1])
+                    cur_ax.set_ylim(limits[2], limits[3])
             cur_ax.legend([f"k={k}" for k in range(min(len(self.evaluations[dim].keys()), max_k))])
             cur_ax.set_xlabel("t")
             cur_ax.set_ylabel("Landscape")

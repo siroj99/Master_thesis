@@ -110,7 +110,7 @@ def draw_filtration(f: dio.Filtration):
 
     # Create a figure with subplots
     
-    fig, axs = plt.subplots(len(relevant_times)//6+1, min(len(relevant_times),6), figsize=(5*min(len(relevant_times),6), 5*(len(relevant_times)//6+1)))
+    fig, axs = plt.subplots(int(np.ceil(len(relevant_times)/6)), min(len(relevant_times),6), figsize=(5*min(len(relevant_times),6), 5*(int(np.ceil(len(relevant_times)/6)))))
     # Iterate through the relevant times and plot each filtration step
     for i, time in enumerate(relevant_times):
         # Get the simplices at the current time
@@ -119,7 +119,7 @@ def draw_filtration(f: dio.Filtration):
             if s.data <= time:
                 cur_simplices.append([s[j] for j in range(s.dimension()+1)])
         # Draw the simplicial complex
-        if len(relevant_times) >= 6:
+        if len(relevant_times) > 6:
             cur_ax = axs[i//6, i%6]
         else:
             cur_ax = axs[i]

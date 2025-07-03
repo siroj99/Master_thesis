@@ -26,7 +26,7 @@ def combinatorial_Laplacian(Bqplus1, Bq):
         downLaplacian = Bq.T@Bq
         return upLaplacian + downLaplacian
 
-def persistent_Laplacian(Bqplus1: np.array, Bq: np.array, verb = False) -> np.array:
+def persistent_Laplacian(Bqplus1: np.array, Bq: np.array, verb = False, up_only=False) -> np.array:
     """
     Inclusion of K in L. Assume the boundaries are ordered the same and first the boundaries in K appear in L.
 
@@ -70,6 +70,9 @@ def persistent_Laplacian(Bqplus1: np.array, Bq: np.array, verb = False) -> np.ar
                     eigval_product *= val
             print("Product of eigenvalues:", np.round(eigval_product, 3))
         print()
+
+    if up_only:
+        return upL
     return upL + downL
 
 def compute_boundary_matrices(f: dio.Filtration, weight_fun):
@@ -140,9 +143,7 @@ def compute_boundary_matrices(f: dio.Filtration, weight_fun):
     return boundary_matrices, name_to_idx, simplices_at_time, relevant_times
 
 def persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time, verb=False, up_only = False):
-    if up_only:
-        Bq = simplices_at_time(s)[q]
-    elif q > 0:
+    if q > 0:
         Bq = boundary_matrices[q][:simplices_at_time(s)[q-1], :simplices_at_time(s)[q]]
     else:
         Bq = simplices_at_time(s)[q]
@@ -154,7 +155,7 @@ def persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_tim
 
     if verb:
         print("Bqplus1:", Bqplus1)
-    return persistent_Laplacian(Bqplus1, Bq, verb=verb)
+    return persistent_Laplacian(Bqplus1, Bq, verb=verb, up_only=up_only)
 
 # def persistent_Laplacian_new(Bqplus1: np.array, Bq: np.array, verb = False) -> np.array:
 #     """
@@ -567,7 +568,7 @@ def complete_analysis_fastest(f: dio.Filtration, weight_fun, max_dim = 1):
     
     return pd.DataFrame(barcodes)
 
-def persistent_Laplacian_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1):
+def persistent_Laplacian_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, up_only=False):
     f.sort()
     max_time = f[len(f)-1].data
     boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, weight_fun)
@@ -581,7 +582,7 @@ def persistent_Laplacian_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1)
                 t_i_bar.set_description(f"s_i: {s_i}/{t_i}")
                 s, t = relevant_times[s_i], relevant_times[t_i]
 
-                Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time)
+                Lap = persistent_Laplacian_filtration(q, boundary_matrices, s, t, simplices_at_time, up_only=up_only)
                 
                 eigenvalues[q][s][t] = np.linalg.eigvalsh(Lap)
     return eigenvalues, relevant_times
@@ -697,13 +698,16 @@ def vertical_Laplacian_eigenvalues(f, weight_fun, max_dim = 1, use_restriction =
 
     return eigenvalues, relevant_times
 
-def eig_plot_helper(x, fun, eps = 1e-8):
+def eig_plot_helper(x, fun, use_pos = True, eps = 1e-10):
     if len(x) > 0:
-        pos_x = x[np.abs(x)>eps]
-        if len(pos_x) > 0:
-            return fun(pos_x)
+        if not use_pos:
+            return fun(x)
         else:
-            return 0
+            pos_x = x[np.abs(x)>eps]
+            if len(pos_x) > 0:
+                return fun(pos_x)
+            else:
+                return 0
     else:
         return np.nan
 
@@ -711,15 +715,16 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
                      plot_args_mesh = {}, 
                      plot_args_diag = {},
                      plot_args_line = {},
-                     plot_type_to_fun = {}):
+                     plot_type_to_fun = {},
+                     plot_value_on_diagonal = True):
     # Can choose these plot types
     plot_type_to_fun = {
-        "Min": np.min,
-        "Max": np.max,
-        "Sum": np.sum,
-        "Mean": np.mean,
-        "Prod": np.prod,
-        "Gmean": ss.gmean
+        "Min eigenvalue": (np.min, True),
+        "Max eigenvalue": (np.max, False),
+        "Sum of eigenvalues": (np.sum, False),
+        "Mean of eigenvalues": (np.mean, True),
+        "Product of eigenvalues": (np.prod, True),
+        "Gmean of eigenvalues": (ss.gmean, True)
     } | plot_type_to_fun
 
     plot_args_mesh = {"alpha": 1, "cmap": "jet"} | plot_args_mesh
@@ -763,25 +768,30 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
     for q in range(max_dim+1):
         df_evals = pd.DataFrame(eigenvalues[q])
         for ax_i, plot_type in enumerate(plot_types):
-            if plot_type == "Prod":
+            if plot_type == "Product of eigenvalues":
                 plot_args_mesh["norm"] = "log"
             else:
                 plot_args_mesh["norm"] = "linear"
-            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, plot_type_to_fun[plot_type]))).values, **plot_args_mesh)
+            plot_fun, use_pos = plot_type_to_fun[plot_type]
+            im = cur_ax(q, ax_i).pcolormesh(x, y, df_evals.apply(lambda x: x.apply(lambda y: eig_plot_helper(y, plot_fun, use_pos=use_pos))).values, **plot_args_mesh)
             plt.colorbar(im, ax=cur_ax(q, ax_i), pad=0.15)
             if q == 0:
-                cur_ax(q, ax_i).set_title(f"{plot_type} eigenvalue")
+                cur_ax(q, ax_i).set_title(f"{plot_type}")
+            if q == max_dim:
+                cur_ax(q, ax_i).set_xlabel("s")
             if filtration is not None:
                 cur_ax(q, ax_i).scatter(barcodes_births[q], barcodes_deaths[q], **plot_args_diag)
 
-            ax_n = cur_ax(q, ax_i).twinx()
-            ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], plot_type_to_fun[plot_type]) for t in relevant_times for _ in (0,1)][:-1], **plot_args_line)
-            if plot_type == "Prod":
-                ax_n.set_yscale("log")
+            # Plot diagonal
+            if plot_value_on_diagonal:
+                ax_n = cur_ax(q, ax_i).twinx()
+                ax_n.plot([relevant_times[0]] + [val for val in relevant_times[1:] for _ in (0, 1)], [eig_plot_helper(eigenvalues[q][t][t], plot_fun, use_pos=use_pos) for t in relevant_times for _ in (0,1)][:-1], **plot_args_line)
+                if plot_type == "Product of eigenvalues":
+                    ax_n.set_yscale("log")
 
             if integer_time_steps:
                 cur_ax(q, ax_i).yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-        cur_ax(q, 0).set_ylabel(f"q={q}")
+        cur_ax(q, 0).set_ylabel(f"q={q}\n\nt")
     fig.tight_layout()
     return fig, ax
 
@@ -790,13 +800,15 @@ def plot_Laplacian_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, plot_
                      plot_args_diag = {},
                      plot_args_line = {},
                      plot_type_to_fun = {},
+                     plot_value_on_diagonal = True,
                      laplacian_type = "persistent",
-                     use_restriction = True):
+                     use_restriction = True,
+                     up_only = False):
     """
     lapalcian_type: "persistent" for normal laplacian, or "cross" for cross laplacian.
     """
     if laplacian_type == "persistent":
-        eigenvalues, relevant_times = persistent_Laplacian_eigenvalues(f, weight_fun, max_dim=max_dim)
+        eigenvalues, relevant_times = persistent_Laplacian_eigenvalues(f, weight_fun, max_dim=max_dim, up_only= up_only)
     elif laplacian_type == "vertical":
         eigenvalues, relevant_times = vertical_Laplacian_eigenvalues(f, weight_fun, max_dim=max_dim, use_restriction=use_restriction)
     else:
@@ -804,7 +816,8 @@ def plot_Laplacian_eigenvalues(f: dio.Filtration, weight_fun, max_dim = 1, plot_
 
     fig, ax = plot_eigenvalues(eigenvalues, relevant_times, plot_types=plot_types, filtration=f,
                                plot_args_mesh = plot_args_mesh, plot_args_diag=plot_args_diag,
-                               plot_args_line=plot_args_line, plot_type_to_fun=plot_type_to_fun)
+                               plot_args_line=plot_args_line, plot_type_to_fun=plot_type_to_fun,
+                               plot_value_on_diagonal = plot_value_on_diagonal)
     return eigenvalues, relevant_times, fig, ax
 
 def plot_non_persistent_eigenvalues(eigenvalues, relevant_times, plot_type="all"):

@@ -1,3 +1,6 @@
 ballmapper_landscapes/
 landscapes/
 figures/
+*.pkl
+*.html
+*.png
