@@ -96,7 +96,7 @@ def draw_2d_simplicial_complex(simplices, pos=None, return_pos=False, ax = None)
     if return_pos: return pos
 
 
-def draw_filtration(f: dio.Filtration):
+def draw_filtration(f: dio.Filtration, show=True):
     f.sort()
     # boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, lambda x: 1)
     
@@ -128,4 +128,5 @@ def draw_filtration(f: dio.Filtration):
         cur_ax.set_title(f"Time: {time:.2f}")
     fig.tight_layout()
 
-    plt.show()
+    if show:
+        plt.show()

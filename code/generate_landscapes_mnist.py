@@ -23,28 +23,28 @@ import gudhi
 
 from pyballmapper import BallMapper
 from pyballmapper.plotting import kmapper_visualize
+from sklearn.datasets import fetch_openml
 
 class generation_args():
-    max_r = 1
+    max_r = 28
     
     # Saving parameters
-    path_to_output = "../ballmapper_landscapes_normal_function"
+    path_to_output = "../mnist_ballmapper_new_filtration"
     redo_landscapes = False
 
     # Edge colors
     # edge_colors = ["random", "gradient"]
-    edge_colors = ["alpha"]
+    edge_colors = ["x", "y"]
     color_seed = 124
 
     # Generation parameters
     n_samples = 7000
-    seeds = range(200)
     
-    use_new_filtration = False
+    use_new_filtration = True
 
     # BallMapper parameters
     use_ballmapper = True
-    ball_eps = 15
+    ball_eps = 2
 
     # Normal Mapper parameters
     cover = CubicalCover(n_intervals=25, overlap_frac=0.3, algorithm="standard")
@@ -99,7 +99,7 @@ def graph_filtration(graph, node_to_color):
     return f, simplex_to_nodes, nodes_to_simplex
 
 def filtration_from_image_ballmapper(image = None, np_array = None, background_value = None, 
-                          eps=None, save_to_html=None, use_y_as_color=False, use_new_filtration=False):
+                          eps=None, save_to_html=None, use_y_as_color=False, use_x_as_color = False, use_new_filtration=False):
     """
     Create a filtration from an image by removing the background and applying Mapper.
     The image should be a PIL Image object.
@@ -128,6 +128,8 @@ def filtration_from_image_ballmapper(image = None, np_array = None, background_v
 
     if use_y_as_color:
         y = X[:,0]
+    elif use_x_as_color:
+        y = X[:, 1]
     else:
         y = np.array([im_gray[X[i,0], X[i,1]] for i in range(X.shape[0])])
 
@@ -160,7 +162,7 @@ def filtration_from_image_ballmapper(image = None, np_array = None, background_v
         f.sort()
 
     return f
-def filtration_from_image(image=None, np_array=None, background_value = None, use_y_as_color=False, use_new_filtration=False,
+def filtration_from_image(image=None, np_array=None, background_value = None, use_y_as_color=False, use_x_as_color = False, use_new_filtration=False,
                           cover=CubicalCover(n_intervals=15, overlap_frac=0.3, algorithm="standard"),
                           cluster_algorithm=DBSCAN(eps=5)):
     """
@@ -190,6 +192,8 @@ def filtration_from_image(image=None, np_array=None, background_value = None, us
      
     if use_y_as_color:
         y = X[:,0]
+    elif use_x_as_color:
+        y = X[:, 1]
     else:
         y = np.array([im_gray[X[i,0], X[i,1]] for i in range(X.shape[0])])
 
@@ -268,25 +272,32 @@ def main(args: generation_args):
     X, y = load_data(args.n_samples)
     for edge_color in args.edge_colors:
         image_bar = tqdm(range(args.n_samples))
-        save_location = f"{args.path_to_output}/eps_{args.ball_eps}/{edge_color}/sample_size_{args.n_samples}/"
+        save_location = f"{args.path_to_output}/sample_size_{args.n_samples}/eps_{args.ball_eps}/color_{edge_color}/{y[image_i]}"
+        if edge_color == "x":
+            use_x_as_color = True
+            use_y_as_color = False
+        elif edge_color == "y":
+            use_x_as_color = False
+            use_y_as_color = True
 
         for image_i in image_bar:
             image_bar.set_description(f"Color: {edge_color}, Image_i: {image_i}/{args.n_samples}")
-            image_name = f"image_{image_i}_y_{y[image_i]}"
+            image_name = f"image_{image_i}"
 
             try:
-                if os.path.isfile(os.path.join(save_location, f"{image_name}.pkl")) and \
-                    os.path.isfile(os.path.join(save_location, f"{image_name}.pkl")) and not args.redo_landscapes:
+                if os.path.isfile(os.path.join(save_location, f"pers_{image_name}.pkl")) and \
+                    os.path.isfile(os.path.join(save_location, f"lap_{image_name}.pkl")) and not args.redo_landscapes:
                     # print(f"Files for method {method} with seed {seed} already exist. Skipping...")
                     continue
 
                 if args.use_ballmapper:
-                    f = filtration_from_image_ballmapper(np, use_new_filtration=args.use_new_filtration,
-                                                            eps=args.ball_eps)
+                    f = filtration_from_image_ballmapper(np_array=X[image_i], use_new_filtration=args.use_new_filtration,
+                                                            eps=args.ball_eps, use_x_as_color=use_x_as_color, use_y_as_color=use_y_as_color)
                 else:
-                    f = filtration_from_image(images[0], use_new_filtration=args.use_new_filtration,
+                    f = filtration_from_image(np_array=X[image_i], use_new_filtration=args.use_new_filtration,
                                                 cover=args.cover, 
-                                                cluster_algorithm = args.cluster_algorithm)
+                                                cluster_algorithm = args.cluster_algorithm,
+                                                use_x_as_color=use_x_as_color, use_y_as_color=use_y_as_color)
                     
 
                 land = Landscape(f, show_diagram=False, max_t=args.max_r)
@@ -305,31 +316,44 @@ def main(args: generation_args):
 
                 
                 os.makedirs(save_location, exist_ok=True)
-                with open(os.path.join(save_location, f"normal_{seed}.pkl"), "wb") as f:
+                with open(os.path.join(save_location, f"pers_{image_name}.pkl"), "wb") as f:
                     land.f = None
                     pickle.dump(land, f)
 
-                with open(os.path.join(save_location, f"laplacian_{seed}.pkl"), "wb") as f:
+                with open(os.path.join(save_location, f"lap_{image_name}.pkl"), "wb") as f:
                     lap_land.f = None
                     pickle.dump(lap_land, f)
             except KeyboardInterrupt:
                 raise KeyboardInterrupt("Process interrupted by user.")
             except Exception as e:
                 print(f"An error occurred: {e}")
-                print(f"Error processing method {method} with seed {seed}. Skipping...")
+                print(f"Error processing color {edge_color} for image {image_i}. Skipping...")
                 continue
 
 if __name__ == "__main__":
     args = generation_args()
     main(args)
 
-    # args.seeds = range(100)
-    # args.edge_colors = ["random", "gradient"]
-    # args.ball_eps = 25
-    # main(args)
+    args.ball_eps = 1.5
+    main(args)
 
-    # args.ball_eps = 20
-    # main(args)
+    args.ball_eps = 2.5
+    main(args)
     
-    # args.ball_eps = 10
-    # main(args)
+    args.ball_eps = 3
+    main(args)
+
+
+    args = generation_args()
+    args.use_new_filtration = False
+    args.path_to_output = "../mnist_ballmapper"
+    main(args)
+
+    args.ball_eps = 1.5
+    main(args)
+
+    args.ball_eps = 2.5
+    main(args)
+    
+    args.ball_eps = 3
+    main(args)

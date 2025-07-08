@@ -148,9 +148,11 @@ class Landscape(object):
         
         for q in range(new_land.max_dim+1):
             if len(self.evaluations[q]) == 0:
-                new_land.evaluations[q] = -other.evaluations[q]
+                for k in range(len(other.evaluations[q].keys())):
+                    new_land.evaluations[q][k] = -other.evaluations[q][k]
             elif len(other.evaluations[q]) == 0:
-                new_land.evaluations[q] = self.evaluations[q]
+                for k in range(len(self.evaluations[q].keys())):
+                    new_land.evaluations[q][k] = self.evaluations[q][k]
             elif len(self.evaluations[q][0]) != len(other.evaluations[q][0]):
                 raise ValueError("Landscapes must have the same number of evaluations")
             
@@ -410,9 +412,11 @@ class Lap_Landscape(object):
         
         for q in range(new_land.min_dim, new_land.max_dim+1):
             if len(self.evaluations[q]) == 0:
-                new_land.evaluations[q] = -other.evaluations[q]
+                for k in range(len(other.evaluations[q].keys())):
+                    new_land.evaluations[q][k] = -other.evaluations[q][k]
             elif len(other.evaluations[q]) == 0:
-                new_land.evaluations[q] = self.evaluations[q]
+                for k in range(len(self.evaluations[q].keys())):
+                    new_land.evaluations[q][k] = self.evaluations[q][k]
             elif len(self.evaluations[q][0]) != len(other.evaluations[q][0]):
                 raise ValueError("Landscapes must have the same number of evaluations")
             
