@@ -29,17 +29,19 @@ class generation_args():
     
     # Saving parameters
     path_to_output = "../ballmapper_landscapes_normal_function"
+    # path_to_output = "../alpha_landscapes"
     redo_landscapes = False
 
     # Edge colors
-    # edge_colors = ["random", "gradient"]
-    edge_colors = ["alpha"]
+    edge_colors = ["random", "gradient"]
+    # edge_colors = ["gradient"]
+    # edge_colors = ["alpha"]
     color_seed = 124
 
     # Generation parameters
     n_points = 250
     methods = ["PV", "cluster", "HC"]
-    seeds = range(200)
+    seeds = range(100)
     cross_section_location = 0.25
     
     use_new_filtration = False
@@ -243,20 +245,20 @@ def PointProcessFiltration(n, xMin=0, xMax=1, yMin=0, yMax=1, plot=False, seed=N
     # print(f"Number of points: {numbPoints}")
 
     if plot:
-        plt.figure()
-        plt.scatter(xx,yy,s=2)
+        plt.figure(figsize=(5,5))
+        plt.scatter(xx,yy,s=5)
         plt.xlim(xMin,xMax)
         plt.ylim(yMin,yMax)
         plt.xlabel('x')
         plt.ylabel('y')
-        plt.title(f'{method} Process, n={numbPoints}')
-        plt.show()
+        plt.title(f'{method} Process')
+        # plt.show()
 
     # f = dio.fill_rips(np.array([xx, yy]).T, 1, max_r)
     f = dio.Filtration()
-    tree = gudhi.alpha_complex.AlphaComplex(points=np.array([xx, yy]).T).create_simplex_tree(max_alpha_square=max_r)
+    tree = gudhi.alpha_complex.AlphaComplex(points=np.array([xx, yy]).T).create_simplex_tree(max_alpha_square=(2*np.pi*max_r)**2)
     for vertices, t in tree.get_filtration():
-        f.append(dio.Simplex(vertices, t))
+        f.append(dio.Simplex(vertices, np.sqrt(t)/(2*np.pi))) # take square root and divide by 2pi to get the radius of the circle
     f.sort()
     return f
 
@@ -352,11 +354,6 @@ def main(args: generation_args):
 if __name__ == "__main__":
     args = generation_args()
     main(args)
-
-    # args.seeds = range(100)
-    # args.edge_colors = ["random", "gradient"]
-    # args.ball_eps = 25
-    # main(args)
 
     # args.ball_eps = 20
     # main(args)

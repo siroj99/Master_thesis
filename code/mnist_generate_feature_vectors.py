@@ -24,13 +24,18 @@ import gudhi
 from pyballmapper import BallMapper
 from pyballmapper.plotting import kmapper_visualize
 from sklearn.datasets import fetch_openml
+import time
+
 
 class generation_args():
     max_r = 28
+    max_dim = 1
+
+    eval_fun = "min"
     
     # Saving parameters
-    path_to_output = "../mnist_ballmapper_new_filtration"
-    redo_landscapes = False
+    path_to_output = "../mnist_ballmapper_vectors"
+    redo_vectors = False
 
     # Edge colors
     # edge_colors = ["random", "gradient"]
@@ -40,7 +45,7 @@ class generation_args():
     # Generation parameters
     n_samples = 7000
     
-    use_new_filtration = True
+    use_new_filtration = False
 
     # BallMapper parameters
     use_ballmapper = True
@@ -162,77 +167,6 @@ def filtration_from_image_ballmapper(image = None, np_array = None, background_v
         f.sort()
 
     return f
-def filtration_from_image(image=None, np_array=None, background_value = None, use_y_as_color=False, use_x_as_color = False, use_new_filtration=False,
-                          cover=CubicalCover(n_intervals=15, overlap_frac=0.3, algorithm="standard"),
-                          cluster_algorithm=DBSCAN(eps=5)):
-    """
-    Create a filtration from an image by removing the background and applying Mapper.
-    The image should be a PIL Image object.
-
-    Parameters:
-    image (PIL.Image): The input image to process.
-    background_value: The value to consider as background (optional). If None, it will be calculated as the mean of the image.
-    """
-
-    # Convert the image to a grayscale numpy array
-    if image is None:
-        im_gray = np_array
-    else:
-        im_gray = 1-np.array(image.convert("L")).astype(int)/255
-
-    # Remove the background
-    if background_value is None:
-        background_value = np.mean(im_gray)
-
-
-    X = np.vstack(np.where(im_gray>background_value)).T
-    # Add the corners of the image to the points
-    # This is needed to ensure that the cover will include the whole image
-    X = np.vstack([np.array([[0, 0], [im_gray.shape[0]-1, im_gray.shape[1]-1]]), X])
-     
-    if use_y_as_color:
-        y = X[:,0]
-    elif use_x_as_color:
-        y = X[:, 1]
-    else:
-        y = np.array([im_gray[X[i,0], X[i,1]] for i in range(X.shape[0])])
-
-    fig, ax = plt.subplots(figsize=(4, 4))
-    ax.scatter(X[:,1], -X[:,0], c=y, cmap="Reds")
-    fig.show()
-
-    # Create a Mapper cover and clustering
-    graph = MapperAlgorithm(cover, cluster_algorithm).fit_transform(X, X)
-
-    # Remove nodes corresponding to corner points
-    for node in graph.nodes:
-        if 0 in graph.nodes[node]["ids"] or 1 in graph.nodes[node]["ids"]:
-            graph.remove_node(node)
-
-    # return graph
-
-    fig, node_col = MapperPlot(graph, dim=3, seed=42, iterations=60, layout_engine="networkx").plot_plotly(colors=y, cmap="Reds")
-    fig.show(config={'scrollZoom': True})
-
-    node_col = aggregate_graph(y, graph, agg=np.nanmean)
-
-    # Create a filtration from the graph
-    if use_new_filtration:
-        f, simplex_to_nodes, nodes_to_simplex = graph_filtration(graph, node_col)
-    else:
-        simplices = []
-        for c in networkx.enumerate_all_cliques(graph):
-            # if len(c) <= 2:
-            simplices.append((c, np.max([node_col[i] for i in c])))
-        f = dio.Filtration()
-        max_time = 0
-        for vertices, time in simplices:
-            f.append(dio.Simplex(vertices, time))
-            max_time = max(max_time, time)
-        # print(max_time)
-        f.sort()
-
-    return f
 
 
 def Laplacian_fun(B22_st, B22_stm1, B22_sm1t, B22_sm1tm1, eye):
@@ -268,6 +202,35 @@ def load_data(size = 7000):
 
     return X, y
 
+def make_vector(f, boundary_matrices, name_to_idx, simplices_at_time, relevant_times, max_dim = 1, max_t = 28, type_="mult", eval_fun = "min"):
+    out_vec = []
+    
+    for q in range(max_dim + 1):
+        for s in range(max_t + 1):
+            for t in range(s, max_t + 1):
+                # print(q, s, t)
+                t_i = np.argmin(np.abs(relevant_times - t))
+                s_i = np.argmin(np.abs(relevant_times - s))
+                if type_ == "mult":
+                    Lap = cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=False, Laplacian_fun = Laplacian_fun, device="cpu")
+                    eigs = torch.linalg.eigvalsh(Lap).cpu().numpy()
+                elif type_ == "persistent":
+                    Lap = persistent_Laplacian_filtration(q, boundary_matrices, relevant_times[s_i], relevant_times[t_i], simplices_at_time, verb=False)
+                    eigs = np.linalg.eigvalsh(Lap)
+                eigs = eigs[eigs > 1e-10]
+                if len(eigs) > 0:
+                    if type_ == "persistent":
+                        if eval_fun == "min":
+                            out_vec.append(np.min(eigs))
+                        elif eval_fun == "max":
+                            out_vec.append(np.max(eigs))
+
+                    if type_ == "mult":
+                        out_vec.append(np.sum(eigs))
+                else:
+                    out_vec.append(0)
+    return np.array(out_vec)
+
 def main(args: generation_args):
     X, y = load_data(args.n_samples)
     for edge_color in args.edge_colors:
@@ -278,57 +241,48 @@ def main(args: generation_args):
         elif edge_color == "y":
             use_x_as_color = False
             use_y_as_color = True
+        pers_time = 0
+        mult_time = 0
 
         for image_i in image_bar:
             save_location = f"{args.path_to_output}/sample_size_{args.n_samples}/eps_{args.ball_eps}/color_{edge_color}/{y[image_i]}"
-            image_bar.set_description(f"Color: {edge_color}, Image_i: {image_i}/{args.n_samples}")
+            image_bar.set_description(f"Color: {edge_color}, Image_i: {image_i}/{args.n_samples}, Pers time: {pers_time:.2f}s, Mult time: {mult_time:.2f}s")
             image_name = f"image_{image_i}"
 
-            try:
-                if os.path.isfile(os.path.join(save_location, f"pers_{image_name}.pkl")) and \
-                    os.path.isfile(os.path.join(save_location, f"lap_{image_name}.pkl")) and not args.redo_landscapes:
-                    # print(f"Files for method {method} with seed {seed} already exist. Skipping...")
-                    continue
-
-                if args.use_ballmapper:
-                    f = filtration_from_image_ballmapper(np_array=X[image_i], use_new_filtration=args.use_new_filtration,
-                                                            eps=args.ball_eps, use_x_as_color=use_x_as_color, use_y_as_color=use_y_as_color)
-                else:
-                    f = filtration_from_image(np_array=X[image_i], use_new_filtration=args.use_new_filtration,
-                                                cover=args.cover, 
-                                                cluster_algorithm = args.cluster_algorithm,
-                                                use_x_as_color=use_x_as_color, use_y_as_color=use_y_as_color)
-                    
-
-                land = Landscape(f, show_diagram=False, max_t=args.max_r)
-                # land.show_diagram(show=False)
-                # im_name = f"{method}_{seed}"
-                # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_normal_diagram.png")
-                # land.plot()
-                # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_normal_landscape.png")
-
-                lap_land = Lap_Landscape(f, show_trace_diagram=False, min_dim=0, max_dim = 1, Laplacian_fun=Laplacian_fun,compute_only_trace=True, max_t=args.max_r)
-                # lap_land.show_trace_diagram(show=False)
-                # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_lap_diagram.png")
-                # lap_land.plot()
-                # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_lap_landscape.png")
-                plt.close("all")
-
-                
-                os.makedirs(save_location, exist_ok=True)
-                with open(os.path.join(save_location, f"pers_{image_name}.pkl"), "wb") as f:
-                    land.f = None
-                    pickle.dump(land, f)
-
-                with open(os.path.join(save_location, f"lap_{image_name}.pkl"), "wb") as f:
-                    lap_land.f = None
-                    pickle.dump(lap_land, f)
-            except KeyboardInterrupt:
-                raise KeyboardInterrupt("Process interrupted by user.")
-            except Exception as e:
-                print(f"An error occurred: {e}")
-                print(f"Error processing color {edge_color} for image {image_i}. Skipping...")
+            # try:
+            if os.path.isfile(os.path.join(save_location, f"pers_{image_name}.npy")) and \
+                os.path.isfile(os.path.join(save_location, f"mult_{image_name}.npy")) and not args.redo_vectors:
+                # print(f"Files for method {method} with seed {seed} already exist. Skipping...")
                 continue
+
+            if args.use_ballmapper:
+                f = filtration_from_image_ballmapper(np_array=X[image_i], use_new_filtration=args.use_new_filtration,
+                                                        eps=args.ball_eps, use_x_as_color=use_x_as_color, use_y_as_color=use_y_as_color)
+            else:
+                f = filtration_from_image(np_array=X[image_i], use_new_filtration=args.use_new_filtration,
+                                            cover=args.cover, 
+                                            cluster_algorithm = args.cluster_algorithm,
+                                            use_x_as_color=use_x_as_color, use_y_as_color=use_y_as_color)
+                
+
+            boundary_matrices, name_to_idx, simplices_at_time, relevant_times = compute_boundary_matrices(f, lambda _ : 1, device = "cpu")
+            stime = time.time()
+            pers_vec = make_vector(f, boundary_matrices, name_to_idx, simplices_at_time, relevant_times, type_="persistent", max_dim = args.max_dim, max_t = args.max_r, eval_fun = args.eval_fun)
+            pers_time = time.time() - stime
+            stime = time.time()
+            mult_vec = make_vector(f, boundary_matrices, name_to_idx, simplices_at_time, relevant_times, type_="mult", max_dim = args.max_dim, max_t = args.max_r, eval_fun = args.eval_fun)
+            mult_time = time.time() - stime
+            
+            os.makedirs(save_location, exist_ok=True)
+            np.save(os.path.join(save_location, f"pers_{image_name}.npy"), pers_vec)
+            np.save(os.path.join(save_location, f"mult_{image_name}.npy"), mult_vec)
+
+            # except KeyboardInterrupt:
+            #     raise KeyboardInterrupt("Process interrupted by user.")
+            # except Exception as e:
+            #     print(f"An error occurred: {e}")
+            #     print(f"Error processing color {edge_color} for image {image_i}. Skipping...")
+            #     continue
 
 if __name__ == "__main__":
     args = generation_args()
@@ -344,16 +298,16 @@ if __name__ == "__main__":
     main(args)
 
 
-    args = generation_args()
-    args.use_new_filtration = False
-    args.path_to_output = "../mnist_ballmapper"
-    main(args)
+    # args = generation_args()
+    # args.use_new_filtration = False
+    # args.path_to_output = "../mnist_ballmapper"
+    # main(args)
 
-    args.ball_eps = 1.5
-    main(args)
+    # args.ball_eps = 1.5
+    # main(args)
 
-    args.ball_eps = 2.5
-    main(args)
+    # args.ball_eps = 2.5
+    # main(args)
     
-    args.ball_eps = 3
-    main(args)
+    # args.ball_eps = 3
+    # main(args)

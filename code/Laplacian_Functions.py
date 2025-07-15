@@ -18,6 +18,24 @@ def SchurComp(M, ind):
     D = M[ind, :][:, ind]
     return A - B @ np.linalg.pinv(D) @ C
 
+def schur_complement(M, m, n, method='least_squares'):
+    # require 0 < m < n
+
+    if len(M.shape) != 2 and M.shape[0] != M.shape[1]:
+        raise ValueError('Schur Complement error: matrix not square')
+
+    if method == 'compute_inverse':
+        inv = np.linalg.pinv(M[m:n, m:n])
+        return M[0:m, 0:m] - M[0:m, m:n] @ inv @ M[m:n, 0:m]
+
+    elif method == 'least_squares':
+        # min (A*B) = A^{-1} * B
+        inv_product = np.linalg.lstsq(M[m:n, m:n], M[m:n, 0:m], rcond=None)[0]
+        return M[0:m, 0:m] - M[0:m, m:n] @ inv_product
+
+    else:
+        raise ValueError('Invalid Schur complement method')
+
 def combinatorial_Laplacian(Bqplus1, Bq):
     upLaplacian = Bqplus1@Bqplus1.T
     if Bq == 0:
@@ -46,7 +64,8 @@ def persistent_Laplacian(Bqplus1: np.array, Bq: np.array, verb = False, up_only=
         # print("Delta^L:", upLaplacian)
         nqL = Bqplus1.shape[0]
         IKL = list(range(nqK, nqL))
-        upL = SchurComp(upLaplacian, IKL)
+        # upL = SchurComp(upLaplacian, IKL)
+        upL = schur_complement(upLaplacian, nqK, nqL)
     else:
         upL = 0
     if verb:

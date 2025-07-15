@@ -10,6 +10,7 @@ from sympy import use
 from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
 import gudhi as gd
+from Laplacian_Functions import persistent_Laplacian_filtration
 
 import time
 import torch
@@ -91,11 +92,13 @@ def compute_boundary_matrices(f: dio.Filtration, weight_fun, device = "cpu"):
 
 def cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_times, verb=False, Laplacian_fun = None, device="cpu"):
     t, s = relevant_times[t_i], relevant_times[s_i]
+    if t_i == 0:
+        return torch.from_numpy(persistent_Laplacian_filtration(q, [b.numpy() for b in boundary_matrices], s, t, simplices_at_time, verb=verb)).to(device)
     tm1 = relevant_times[t_i-1]
 
     if verb:
         print(f"Bqplus1:\n{boundary_matrices[q+1]}")
-        print(f"n_q_t:{simplices_at_time(t)}, n_q_s: {simplices_at_time(s)}")
+        print(f"n_q_t:{simplices_at_time(t)}, n_q_tm1:{simplices_at_time(tm1)}, n_q_s: {simplices_at_time(s)}")
     if s_i > 0:
         sm1 = relevant_times[s_i-1]
 
@@ -124,7 +127,8 @@ def cross_Laplacian(q, boundary_matrices, s_i, t_i, simplices_at_time, relevant_
         B22_sm1t_full = torch.linalg.pinv(B22_sm1t)@B22_sm1t
 
         B22 = torch.linalg.pinv(B22_st)
-        print(f"B22_st^dagger:{(B22<1e-13).sum()}/{B22.shape[0]*B22.shape[1]}={(B22<1e-13).sum()/(B22.shape[0]*B22.shape[1])}")
+        if verb:
+            print(f"B22_st^dagger:{(B22<1e-13).sum()}/{B22.shape[0]*B22.shape[1]}={(B22<1e-13).sum()/(B22.shape[0]*B22.shape[1])}")
         # return
         B22_st_full = torch.zeros_like(eye_sm1t, device = device)
         B22_st_full[(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):,(simplices_at_time(s)[q+1]-simplices_at_time(sm1)[q+1]):] = B22@B22_st

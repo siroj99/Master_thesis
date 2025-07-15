@@ -4,3 +4,4 @@ figures/
 *.pkl
 *.html
 *.png
+*.npy

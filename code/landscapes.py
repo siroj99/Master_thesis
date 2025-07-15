@@ -241,6 +241,7 @@ class Landscape(object):
             ax[dim].set_xlabel("t")
             ax[dim].set_ylabel("Landscape")
             ax[dim].set_title(f"Landscape dim {dim}")
+        return ax
 
 class Lap_Landscape(object):
     def __init__(self, f = None, min_dim = 0, max_dim = 1, max_t = None, n_evaluations = 1000, show_trace_diagram=False, Laplacian_fun = None,
@@ -358,8 +359,10 @@ class Lap_Landscape(object):
             k_combined = [self.evaluations[q][k] for k in range(len(self.evaluations[q].keys()))]
             if len(k_combined) > 0:
                 new_land.evaluations[q][0] = np.sum(k_combined, axis=0)
-            else:
+            elif q > self.min_dim:
                 new_land.evaluations[q][0] = np.zeros(len(new_land.evaluations[q-1][0]))
+            else:
+                new_land.evaluations[q][0] = np.zeros(1000)
         return new_land
 
         
@@ -506,6 +509,7 @@ class Lap_Landscape(object):
             cur_ax.set_xlabel("t")
             cur_ax.set_ylabel("Landscape")
             cur_ax.set_title(f"Lap Landscape dim {dim}")
+        return ax
 
     # def plot(self, ax=None):
     #     if ax is None:
