@@ -6,7 +6,7 @@ import collections.abc
 from Laplacian_Functions_torch import *
 
 class Landscape(object):
-    def __init__(self, f = None, prime = 47, max_dim = 1, max_t = None, n_evaluations = 1000, show_diagram=False):
+    def __init__(self, f = None, prime = 47, max_dim = 1, max_t = None, n_evaluations = 1000, show_diagram=False, use_infinite = False):
         self.max_dim = max_dim
         self.computed_norm = None
         self.computed_norm_limit = 0
@@ -27,7 +27,7 @@ class Landscape(object):
             if show_diagram:
                 dio.plot.plot_all_diagrams(self.dgms, show=True, labels=True)
 
-            self.evaluate_on_interval(n_evaluations)
+            self.evaluate_on_interval(n_evaluations, use_infinite=use_infinite)
 
     def show_diagram(self, show=True, limits=None):
         if self.f is not None and self.dgms is None:
@@ -39,13 +39,17 @@ class Landscape(object):
         else:
             print("No diagram to show. Please add filtration first.")
 
-    def evaluate_on_interval(self, n):
+    def evaluate_on_interval(self, n, use_infinite = False):
         x_axis = np.linspace(0, self.max_t, n)
 
         self.evaluations = {q: {k: [] for k in range(len(self.points[q]))} for q in range(self.max_dim+1)}
         for t in x_axis:
             for q in range(self.max_dim+1):
-                evaluation_for_every_k = np.array([max(t-b, 0) if t<(b+d)/2 else max(d-t, 0) for b, d in self.points[q] if d != np.inf])
+                if not use_infinite:
+                    evaluation_for_every_k = np.array([max(t-b, 0) if t<(b+d)/2 else max(d-t, 0) for b, d in self.points[q] if d != np.inf])
+                else:
+                    evaluation_for_every_k = np.array([max(t-b, 0) if t<(b+d)/2 else max(d-t, 0) for b, d in self.points[q] if d != np.inf] + 
+                                                      [max(t-b, 0) for b, d in self.points[q] if d == np.inf])
                 evaluation_for_every_k[::-1].sort()
                 for k in range(len(self.points[q])):
                     if k < len(evaluation_for_every_k):
@@ -265,7 +269,7 @@ class Lap_Landscape(object):
             p = dio.cohomology_persistence(self.f, 47, True)
             self.dgms = dio.init_diagrams(p, self.f)
             self.eigenvalues, self.relevant_times = cross_Laplaican_eigenvalues_less_memory(f, device="cpu", Laplacian_fun=Laplacian_fun, min_dim=min_dim, max_dim=max_dim, compute_only_trace=compute_only_trace)
-            s_lists, t_lists, cmaps = plot_trace_diagram(self.f, self.eigenvalues, show=show_trace_diagram, max_dim=max_dim, min_dim=min_dim)
+            s_lists, t_lists, cmaps = plot_trace_diagram(self.f, self.eigenvalues, show=show_trace_diagram, max_dim=max_dim, min_dim=min_dim, title="Laplacian diagram")
             self.points = [[(s_lists[q][point_i], t_lists[q][point_i], cmaps[q][point_i]) for point_i in range(len(s_lists[q]))] for q in range(self.max_dim+1)]
 
             
@@ -276,12 +280,12 @@ class Lap_Landscape(object):
 
     def show_trace_diagram(self, show=True, lap_pt_style=None):
         if self.dgms is not None and self.eigenvalues is not None:
-            plot_trace_diagram_no_f(self.dgms, self.eigenvalues, show=show, min_dim=self.min_dim, max_dim=self.max_dim, lap_pt_style=lap_pt_style)
+            plot_trace_diagram_no_f(self.dgms, self.eigenvalues, show=show, min_dim=self.min_dim, max_dim=self.max_dim, lap_pt_style=lap_pt_style, title="Laplacian diagram")
         elif self.f is not None and self.Laplacian_fun is not None:
                 if self.eigenvalues is None:
                     self.eigenvalues, self.relevant_times = cross_Laplaican_eigenvalues_less_memory(self.f, device="cpu", Laplacian_fun=self.Laplacian_fun, min_dim=self.min_dim, max_dim=self.max_dim, compute_only_trace=self.compute_only_trace)
                 # self.points = [[(p.birth, p.death) for p in self.dgms[q]] for q in range(self.max_dim+1)]
-                plot_trace_diagram(self.f, self.eigenvalues, show=show, max_dim=self.max_dim, min_dim=self.min_dim)
+                plot_trace_diagram(self.f, self.eigenvalues, show=show, max_dim=self.max_dim, min_dim=self.min_dim, title="Laplacian diagram")
         else:
             print("No diagram to show." + "Please add filtration first."*(self.f is None) + "Please add Laplacian function first."*(self.Laplacian_fun is None))
 

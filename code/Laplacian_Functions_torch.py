@@ -860,7 +860,7 @@ def plot_eigenvalues(eigenvalues, relevant_times, plot_types = "all", filtration
 
 def plot_trace_diagram(f, eigenvalues, show=False, min_dim=0, max_dim=1,
                  line_style=None, pt_style_normal=None, lap_pt_style=None,
-                 limits = None):
+                 limits = None, title = "Persistence diagram"):
 
     p = dio.cohomology_persistence(f, 47, True)
     dgms = dio.init_diagrams(p, f)
@@ -948,7 +948,7 @@ def plot_trace_diagram(f, eigenvalues, show=False, min_dim=0, max_dim=1,
 
         cur_ax.set_xlabel('birth')
         cur_ax.set_ylabel('death')
-        cur_ax.set_title(f"Persistence diagram (dim {q})")
+        cur_ax.set_title(f"{title} (dim {q})")
 
         ## clip the view
         #plt.axes().set_xlim([min_birth, max_birth])
@@ -960,7 +960,7 @@ def plot_trace_diagram(f, eigenvalues, show=False, min_dim=0, max_dim=1,
 
 def plot_trace_diagram_no_f(dgms, eigenvalues, show=False, min_dim=0, max_dim=1,
                  line_style=None, pt_style_normal=None, lap_pt_style=None,
-                 limits = None):
+                 limits = None, title="Persistence diagram"):
 
     fig, ax = plt.subplots(1, max_dim+1-min_dim, figsize=(6*(max_dim+1-min_dim),5))
 
@@ -1046,7 +1046,7 @@ def plot_trace_diagram_no_f(dgms, eigenvalues, show=False, min_dim=0, max_dim=1,
 
         cur_ax.set_xlabel('birth')
         cur_ax.set_ylabel('death')
-        cur_ax.set_title(f"Persistence diagram (dim {q})")
+        cur_ax.set_title(f"{title} (dim {q})")
 
         ## clip the view
         #plt.axes().set_xlim([min_birth, max_birth])
@@ -1127,7 +1127,7 @@ def plot_Laplacian_new_eigenvalues(f: dio.Filtration, weight_fun, min_dim = 0, m
     if plot_diagram:
         s_lists, t_lists, cmaps = plot_trace_diagram(f, eigenvalues, show=show_plot, min_dim=min_dim, max_dim=max_dim,
                      line_style=plot_args_line, pt_style_normal=plot_args_diag, lap_pt_style=lap_pt_style,
-                     limits = (relevant_times[0], relevant_times[-1]*1.2, relevant_times[0], relevant_times[-1]*1.2))
+                     limits = (relevant_times[0], relevant_times[-1]*1.2, relevant_times[0], relevant_times[-1]*1.2), title="Laplacian diagram")
         return eigenvalues, relevant_times, s_lists, t_lists, cmaps
 
     # elif plot_histogram:

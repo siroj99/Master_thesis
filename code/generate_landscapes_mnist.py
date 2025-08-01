@@ -29,18 +29,21 @@ class generation_args():
     max_r = 28
     
     # Saving parameters
-    path_to_output = "../mnist_ballmapper_new_filtration"
+    path_to_output = "../mnist_ballmapper_inf"
     redo_landscapes = False
+    compute_lap = False
 
     # Edge colors
     # edge_colors = ["random", "gradient"]
-    edge_colors = ["x", "y"]
+    edge_colors = ["y"]
     color_seed = 124
 
     # Generation parameters
     n_samples = 7000
     
-    use_new_filtration = True
+    use_new_filtration = False
+
+    use_infinite = True
 
     # BallMapper parameters
     use_ballmapper = True
@@ -300,29 +303,30 @@ def main(args: generation_args):
                                                 use_x_as_color=use_x_as_color, use_y_as_color=use_y_as_color)
                     
 
-                land = Landscape(f, show_diagram=False, max_t=args.max_r)
+                land = Landscape(f, show_diagram=False, max_t=args.max_r, use_infinite=args.use_infinite)
                 # land.show_diagram(show=False)
                 # im_name = f"{method}_{seed}"
                 # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_normal_diagram.png")
                 # land.plot()
                 # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_normal_landscape.png")
 
-                lap_land = Lap_Landscape(f, show_trace_diagram=False, min_dim=0, max_dim = 1, Laplacian_fun=Laplacian_fun,compute_only_trace=True, max_t=args.max_r)
-                # lap_land.show_trace_diagram(show=False)
-                # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_lap_diagram.png")
-                # lap_land.plot()
-                # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_lap_landscape.png")
-                plt.close("all")
-
-                
                 os.makedirs(save_location, exist_ok=True)
                 with open(os.path.join(save_location, f"pers_{image_name}.pkl"), "wb") as f:
                     land.f = None
                     pickle.dump(land, f)
 
-                with open(os.path.join(save_location, f"lap_{image_name}.pkl"), "wb") as f:
-                    lap_land.f = None
-                    pickle.dump(lap_land, f)
+                if args.compute_lap:
+                    lap_land = Lap_Landscape(f, show_trace_diagram=False, min_dim=0, max_dim = 1, Laplacian_fun=Laplacian_fun,compute_only_trace=True, max_t=args.max_r)
+                    # lap_land.show_trace_diagram(show=False)
+                    # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_lap_diagram.png")
+                    # lap_land.plot()
+                    # plt.savefig("../figures/small_tests_Mapper_gradient/" + im_name + "_lap_landscape.png")
+
+                    with open(os.path.join(save_location, f"lap_{image_name}.pkl"), "wb") as f:
+                        lap_land.f = None
+                        pickle.dump(lap_land, f)
+
+                plt.close("all")
             except KeyboardInterrupt:
                 raise KeyboardInterrupt("Process interrupted by user.")
             except Exception as e:

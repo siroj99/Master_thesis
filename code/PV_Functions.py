@@ -201,6 +201,8 @@ def generate_points_HC(n, domain, rng=np.random,
 
     if (1-error_in_samples)*n < s.shape[0] < (1+error_in_samples)*n:
         # print(f"Generated {s.shape[0]} points, which is within the error margin of {error_in_samples*100:.2f}% of the target {n} points.")
+        print(f"Generated {s.shape[0]} points, which is within the error margin of {error_in_samples*100:.2f}% of the target {n} points.")
+        print(f"radius core: {radiusCore}")
         return s
     elif s.shape[0] < (1-error_in_samples)*n:
         # print(f"Generated {s.shape[0]} points, which is below the error margin of {error_in_samples*100:.2f}% of the target {n} points. Regenerating with 25% smaller radius...")
